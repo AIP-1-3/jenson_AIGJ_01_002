@@ -31,7 +31,15 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 .venv/bin/python -m tsinfer.data.baselines
 ```
 
-상시 가동은 [deploy/systemd/tsinfer-collector.service](deploy/systemd/tsinfer-collector.service) 주석대로 user 서비스로 등록한다.
+상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
+
+```bash
+.venv/bin/python -m tsinfer.service --once        # 한 주기만 돌려 결과 확인
+.venv/bin/python -m tsinfer.service --no-publish  # API 만 (http://localhost:8100/docs)
+.venv/bin/python -m tsinfer.service.summary       # 최근 12시간 무중단 보고
+```
+
+상시 가동은 [tsinfer-collector.service](deploy/systemd/tsinfer-collector.service), [tsinfer-service.service](deploy/systemd/tsinfer-service.service) 주석대로 user 서비스로 등록한다.
 
 ## 구조
 
