@@ -66,3 +66,13 @@ def test_full_run_combined_beats_rules():
     assert len(curve) == 8
     assert results["rules"].loc["noise", "detection_rate"] >= 80     # 잡음 규칙 (정상 기간 분위수 임계값)
     assert set(diag["noise_thr"]) <= {(sp, m) for sp in spaces for m in an.METRICS}
+    assert all(n >= an.STUCK_MIN[m] // 5 for (sp, m), n in diag["stuck_steps"].items())
+
+
+def test_flat_run_steps_and_stuck_threshold_learned_from_normal():
+    s = pd.Series([1.0, 1.0, 1.0, 2.0, 2.0, np.nan, 3.0])
+    assert an.flat_run_steps(s).tolist() == [3, 3, 3, 2, 2, 0, 1]
+    w = _wide(days=4)
+    w.loc[w.index[:60], ("lab", "temperature")] = 22.0          # 정상 기간에 5시간 같은 값 (빈방·분해능)
+    steps = an.fit_stuck_steps(w, ["lab"])
+    assert steps[("lab", "temperature")] > 60 and steps[("lab", "co2")] == an.STUCK_MIN["co2"] // 5
