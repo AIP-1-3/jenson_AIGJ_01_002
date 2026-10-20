@@ -59,6 +59,13 @@ tmux new -s train
 ~/jetson_orin/scripts/gpu-run.sh -- .venv/bin/python -m tsinfer.models.pretrained   # → reports/06_pretrained.md
 ```
 
+과제 7 엣지 최적화 (과제 3·4 모델 파일이 있어야 한다):
+
+```bash
+.venv/bin/pip install onnx onnxruntime "numpy<2"
+~/jetson_orin/scripts/gpu-run.sh -- .venv/bin/python -m tsinfer.models.edge         # → reports/07_edge.md
+```
+
 학습이 끝나면 `.env` 의 `SERVICE_MODEL=gru` 로 바꾸고 `systemctl --user restart tsinfer-service`.
 
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
