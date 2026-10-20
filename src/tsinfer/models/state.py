@@ -259,6 +259,8 @@ def main() -> int:
     ]
     if sched.get("source") == "placeholder":
         lines += ["> ⚠ 사용 여부 정답이 임시 가정(평일 9~18시)이다. 실제 시간표로 바꾸면 다시 실행한다.", ""]
+    if sched.get("note"):
+        lines += [f"> 정답 출처: {sched['note']}", ""]
     for task, title in (("occupied", "사용 여부"), ("ventilation", "환기 경보 (30분 전)")):
         if task not in results:
             lines += [f"## {title}", "", "(정답이 한 종류뿐이라 학습 불가 — 정답 설정 확인)", ""]
