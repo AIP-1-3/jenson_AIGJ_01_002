@@ -1,0 +1,28 @@
+# 접속 정보 — 절대 커밋하지 않는다
+.env
+.env.*
+!.env.example
+
+# 가상환경·캐시
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# 데이터·모델·엔진 (용량 크고 재생성 가능)
+data/
+models/
+*.db
+*.db-wal
+*.db-shm
+*.parquet
+*.csv
+*.onnx
+*.engine
+*.pt
+*.pth
+
+# 로그
+logs/
+*.log
