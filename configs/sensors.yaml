@@ -1,18 +1,56 @@
 # 수집기 매핑 설정 (과제 1-2: 형식이 바뀌어도 코드가 아니라 이 파일만 고친다)
+# 각 키의 의미는 src/tsinfer/collector/mapping.py 맨 위 설명 참고.
 #
-# topic: MQTT 구독 패턴. {space} 같은 자리표시자는 토픽에서 값을 뽑아낸다.
-# payload: JSON 필드 → 저장 항목 이름 매핑.
-# timestamp: 센서가 찍은 시각 필드. 없으면 수신 시각을 쓴다 (둘 다 저장).
-#
-# TODO: 실제 토픽·페이로드를 `mosquitto_sub -v -t '#'` 등으로 확인해서 고친다.
+# 2026-10-20 브로커에서 확인한 토픽:
+#   application/<appId>/device/<devEui>/event/up   ChirpStack v4 LoRaWAN 업링크 (환경 센서)
+#   xflow/hvacr/idu/<id>/status                    냉난방 실내기 상태
+#   xflow/hvacr/odu/<id>/status                    실외기 상태
+#   xflow/controller/<id>/status                   컨트롤러
+#   gateway/<id>/state/conn                        게이트웨이 접속 상태 (바이너리, 수집 안 함)
 
 sources:
-  - name: env_sensor_v1
-    topic: "sensors/{space}/env"
+  # 환경 센서 (CO₂·온도·습도) — ChirpStack 이 디코딩한 값은 object 아래에 있다
+  - name: chirpstack_env
+    topic: "application/{app_id}/device/{dev_eui}/event/up"
+    # 2026-10-20 확인한 장치 10대 (Milesight). 공간은 ChirpStack 태그 location 을 쓴다.
+    #   실습실(7): EM500-CO2 x2, AM107(CO₂·조도·PIR), EM300-TH x2, EM320-TH, WS302(소음)
+    #   사무실(2): AM103(CO₂), EM320-TH      사무실 밖(1): EM300-TH (외기에 가까운 기준)
+    # 장치를 옮기면 ChirpStack 태그만 바꾸면 되고 코드·설정은 그대로다.
+    space:
+      from: deviceInfo.tags.location
+      unmapped: keep
+    device:
+      from: deviceInfo.deviceName
+    payload:                        # 장치에 없는 필드는 건너뛴다
+      co2: object.co2
+      temperature: object.temperature
+      humidity: object.humidity
+      pressure: object.pressure
+      tvoc: object.tvoc
+      illumination: object.illumination
+      pir_activity: object.activity   # AM107 재실 감지 — 과제 5 '직접 관찰' 보조 정답 후보
+      sound_laeq: object.LAeq         # WS302 소음 — 사용 여부 판단 보조 후보
+      battery: object.battery         # 배터리 방전 → 값 고정/끊김의 원인 설명용
+    timestamp:
+      field: time
+      format: iso8601
+
+  # 냉난방 실내기 — 과제 4 '냉방 정지' 탐지와 과제 5 '빈 방 냉난방' 판단에 쓴다
+  - name: xflow_idu
+    topic: "xflow/hvacr/idu/{unit_id}/status"
+    each: values                    # {"values": {"회의실": {...}}} 의 키가 공간 이름
+    space:
+      from: key
+    device:
+      from: unit_id
     payload:
-      co2: co2
-      temperature: temp
-      humidity: humidity
+      hvac_power: power
+      hvac_mode: mode
+      hvac_target_temperature: target_temperature
+      hvac_current_temperature: current_temperature
+      hvac_current_humidity: current_humidity
+      hvac_fan_speed: fan_speed
+      hvac_error_code: error_code
     timestamp:
       field: ts
-      format: epoch_ms           # epoch_s | epoch_ms | iso8601
+      format: epoch_ms
