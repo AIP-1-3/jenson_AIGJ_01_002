@@ -1,10 +1,12 @@
 # 실험·서비스 공통 설정. 학습과 서비스가 같은 값을 읽어야 전처리가 어긋나지 않는다 (과제 8-3).
 
-spaces:            # TODO: 실제 공간 ID 는 데이터 확인 후 맞춘다
-  - classroom_1
-  - classroom_2
-  - meeting_room
-  - lounge
+# 실제 교육장 공간 (ChirpStack 태그 location, 2026-10-20 확인).
+# 과제 안내의 '강의실 2·회의실 1·라운지 1'과 구성이 다르다. 사무실 밖은 외기 기준으로 쓴다.
+spaces:
+  - 실습실
+  - 사무실
+  - 회의실
+  - 사무실 밖
 
 metrics: [co2, temperature, humidity]
 
@@ -17,8 +19,9 @@ preprocess:
   short_gap_max_minutes: 10      # 이하면 보간, 초과면 결측으로 둔다
 
 split:                           # 시간순 분할 — 무작위 섞기 금지 (과제 2-3)
-  train_end: null                # 예: "2026-11-01"
-  valid_end: null
+  # 실데이터 2026-07-22~ 기준 약 70/15/15. 시험 기간은 모델 선택에 쓰지 않는다.
+  train_end: "2026-09-21"
+  valid_end: "2026-10-06"
 
 forecast:
   horizon_minutes: 60
