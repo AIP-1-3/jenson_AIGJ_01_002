@@ -121,6 +121,10 @@ def dataset(wide: pd.DataFrame, cfg: dict[str, Any], sched: dict[str, Any], obse
 
 
 FEATURES_EXCLUDE = {"time", "space", "y_occ", "y_vent"}
+TIME_FEATURES = ("hour_sin", "hour_cos", "weekday")
+# 사용 여부 정답은 시간표(시각·요일의 함수)라, 시각·요일을 입력에 넣으면 모델이 센서가 아니라 시간표를 외운다.
+# 그래서 사용 여부는 센서 특성만으로 학습하고, 시각 포함 모델은 참고 행으로만 보고한다.
+CV_FOLDS = 5
 
 
 # ---------------------------------------------------------------- 규칙 기준선 (서비스와 같은 규칙)
@@ -189,6 +193,21 @@ def error_cases(df: pd.DataFrame, y: np.ndarray, pred: np.ndarray, tz: str, top:
     return g.sort_values("n", ascending=False).head(top).round(1).reset_index()
 
 
+def oof_proba(make, X: pd.DataFrame, y: np.ndarray, folds: int = CV_FOLDS) -> np.ndarray:
+    """시간순으로 자른 연속 구간 folds 개에서 '나머지로 학습 → 이 구간 예측'. 임계값을 정할 양성 표본을 늘리려는 것."""
+    p = np.full(len(y), np.nan)
+    edges = np.linspace(0, len(y), folds + 1).astype(int)
+    for a, b in zip(edges[:-1], edges[1:]):
+        hold = np.zeros(len(y), bool)
+        hold[a:b] = True
+        if len(np.unique(y[~hold])) < 2:
+            continue
+        m = make()
+        m.fit(X[~hold], y[~hold])
+        p[hold] = m.predict_proba(X[hold])[:, 1]
+    return p
+
+
 def run(cfg: dict[str, Any], wide: pd.DataFrame, sched: dict[str, Any], observations=None):
     from tsinfer.data.split import split_by_time
 
@@ -197,31 +216,49 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, sched: dict[str, Any], observat
     df = dataset(wide, cfg, sched, observations)
     tr_idx, va_idx, te_idx = (s.index for s in split_by_time(wide, cfg))
     part = {"train": df["time"].isin(tr_idx), "valid": df["time"].isin(va_idx), "test": df["time"].isin(te_idx)}
-    feats = [c for c in df.columns if c not in FEATURES_EXCLUDE]
-    results, fitted, errors, thresholds = {}, {}, {}, {}
+    feats_all = [c for c in df.columns if c not in FEATURES_EXCLUDE]
+    sensor_feats = [c for c in feats_all if c not in TIME_FEATURES]
+    feats = {"occupied": sensor_feats, "ventilation": feats_all}
+    seed = cfg.get("model", {}).get("seed", 0)
+    results, fitted, errors, thresholds, info = {}, {}, {}, {}, {}
 
     for task, ycol in (("occupied", "y_occ"), ("ventilation", "y_vent")):
         ok = df[ycol].notna() & df["co2"].notna()
         tr, va, te = (df[ok & part[k]] for k in ("train", "valid", "test"))
         if tr[ycol].nunique() < 2 or te.empty:
             continue
+        fx = feats[task]
+        y_te = te[ycol].to_numpy().astype(int)
         rows = {}
         rule = rule_occupied(te) if task == "occupied" else rule_vent(te, th["co2_ventilate_ppm"],
                                                                        th["ventilation_alert_within_minutes"])
-        rows["rule"] = scores(te[ycol].to_numpy().astype(int), rule.astype(int))
-        for name, model in make_models(cfg.get("model", {}).get("seed", 0)).items():
-            model.fit(tr[feats], tr[ycol].astype(int))
+        rows["rule"] = scores(y_te, rule.astype(int))
+        fit_df = pd.concat([tr, va]) if task == "ventilation" else tr
+        info[task] = {"train_pos": int(tr[ycol].sum()), "valid_pos": int(va[ycol].sum()), "test_pos": int(y_te.sum())}
+        for name in make_models(seed):
+            model = make_models(seed)[name]
             thr = 0.5
-            if task == "ventilation" and len(va) and va[ycol].sum() > 0:
-                thr = pick_threshold(va[ycol].to_numpy().astype(int), model.predict_proba(va[feats])[:, 1])
-            p = model.predict_proba(te[feats])[:, 1]
-            pred = (p >= thr).astype(int)
-            rows[name] = {**scores(te[ycol].to_numpy().astype(int), pred), "threshold": round(thr, 3)}
+            if task == "ventilation":
+                # 임계값: 학습+검증 기간 시간순 교차 예측(OOF)에서 재현율 목표를 만족하는 값.
+                # 검증 기간만 쓰면 양성이 적어(연휴) 임계값이 흔들린다. 최종 모델은 학습+검증으로 다시 학습.
+                y_fit = fit_df[ycol].to_numpy().astype(int)
+                p_oof = oof_proba(lambda: make_models(seed)[name], fit_df[fx], y_fit)
+                okp = ~np.isnan(p_oof)
+                if y_fit[okp].sum() > 0:
+                    thr = pick_threshold(y_fit[okp], p_oof[okp])
+            model.fit(fit_df[fx], fit_df[ycol].astype(int))
+            pred = (model.predict_proba(te[fx])[:, 1] >= thr).astype(int)
+            rows[name] = {**scores(y_te, pred), "threshold": round(thr, 3)}
             fitted[f"{task}_{name}"] = model
             thresholds[f"{task}_{name}"] = thr
-            errors[f"{task}_{name}"] = error_cases(te, te[ycol].to_numpy().astype(int), pred, tz)
+            errors[f"{task}_{name}"] = error_cases(te, y_te, pred, tz)
+        if task == "occupied":
+            # 참고: 시각·요일까지 넣은 모델 — 시간표를 외워 점수가 부풀려진다는 것을 보이기 위한 행
+            ref = make_models(seed)["hgb"].fit(tr[feats_all], tr[ycol].astype(int))
+            rows["hgb+시각(참고)"] = {**scores(y_te, (ref.predict_proba(te[feats_all])[:, 1] >= 0.5).astype(int)),
+                                     "threshold": 0.5}
         results[task] = pd.DataFrame(rows).T
-    return results, fitted, thresholds, errors, feats, df
+    return results, fitted, thresholds, errors, feats, df, info
 
 
 def main() -> int:
@@ -236,7 +273,7 @@ def main() -> int:
     obs_path = ROOT / (sched.get("observations_csv") or "data/observations.csv")
     observations = pd.read_csv(obs_path) if obs_path.exists() else None
     wide = to_wide(clean(load_raw(metrics=cfg["metrics"]), cfg)[0], cfg)
-    results, fitted, thresholds, errors, feats, df = run(cfg, wide, sched, observations)
+    results, fitted, thresholds, errors, feats, df, info = run(cfg, wide, sched, observations)
 
     (ROOT / "models").mkdir(exist_ok=True)
     joblib.dump({"models": fitted, "thresholds": thresholds, "features": feats}, ROOT / "models" / "state.joblib")
@@ -253,8 +290,13 @@ def main() -> int:
         f"직접 관찰 {0 if observations is None else len(observations)}건 우선 적용. 정답 정보는 입력에 넣지 않음",
         f"- 환기 경보 정답: 지금 <{cfg['thresholds']['co2_ventilate_ppm']}ppm 이고 "
         f"{cfg['thresholds']['ventilation_alert_within_minutes']}분 안에 ≥{cfg['thresholds']['co2_ventilate_ppm']}ppm. 이미 넘은 시점 제외",
-        f"- 입력 특성 {len(feats)}개: {', '.join(feats)}",
-        f"- 환기 경보 임계값: 검증 기간 재현율 ≥{RECALL_TARGET:.0%} 인 가장 높은 확률값 / 사용 여부는 0.5",
+        f"- 사용 여부 입력 (센서만) {len(feats['occupied'])}개: {', '.join(feats['occupied'])}. "
+        f"정답이 시간표라 시각·요일을 넣으면 시간표를 외우므로 뺐다 (넣은 모델은 '참고' 행)",
+        f"- 환기 경보 입력 {len(feats['ventilation'])}개: 위 + 시각·요일",
+        f"- 사용 여부는 학습 기간으로 학습, 임계값 0.5",
+        f"- 환기 경보: 학습+검증 기간을 시간순 {CV_FOLDS}구간으로 나눈 교차 예측에서 재현율 ≥{RECALL_TARGET:.0%} 인 "
+        f"가장 높은 확률값을 임계값으로, 최종 모델은 학습+검증으로 다시 학습. 양성 수 "
+        + (", ".join(f"{k} {v}" for k, v in info.get("ventilation", {}).items()) or "-"),
         "",
     ]
     if sched.get("source") == "placeholder":

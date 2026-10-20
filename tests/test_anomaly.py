@@ -58,9 +58,11 @@ def test_rules_catch_spike_stuck_gap_without_false_alarms_on_clean():
 
 def test_full_run_combined_beats_rules():
     pytest.importorskip("torch")
-    ae, spaces, results, clean_fa, curve, faults, _ = an.run(CFG, _wide(), per_kind=6, epochs=8)
+    ae, spaces, results, clean_fa, curve, faults, _, diag = an.run(CFG, _wide(), per_kind=6, epochs=8)
     assert spaces == ["lab", "meet"] and np.isfinite(ae.threshold)
     comb, rules = results["combined"].loc["전체"], results["rules"].loc["전체"]
     assert comb["detection_rate"] >= rules["detection_rate"]
     assert results["ae"].loc["noise", "detection_rate"] > 50
     assert len(curve) == 8
+    assert results["rules"].loc["noise", "detection_rate"] >= 80     # 잡음 규칙 (정상 기간 분위수 임계값)
+    assert set(diag["noise_thr"]) <= {(sp, m) for sp in spaces for m in an.METRICS}
