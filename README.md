@@ -19,6 +19,12 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 .venv/bin/python -m tsinfer.collector
 ```
 
+과거 데이터(InfluxDB `iot-bucket`, 2026-07-22~)는 교육장망에서 parquet 로 받는다. 끊겨도 같은 명령으로 이어 받는다.
+
+```bash
+.venv/bin/python -m tsinfer.ingest.influx_export --start 2026-07-01
+```
+
 상시 가동은 [deploy/systemd/tsinfer-collector.service](deploy/systemd/tsinfer-collector.service) 주석대로 user 서비스로 등록한다.
 
 ## 구조
@@ -30,6 +36,7 @@ configs/
 src/tsinfer/
   config.py           .env + yaml 로딩
   collector/          과제 1: 상시 수집기 (자동 재접속, SQLite WAL, 재전송 중복 제거)
+  ingest/             InfluxDB 과거 데이터 → data/raw/*.parquet
   data/               과제 2: 정제·리샘플·분할·기준선
   models/             과제 3~7: 예측·이상·상태·사전학습 비교·TensorRT 변환
   service/            과제 8: 매분 추론, MQTT(retain) 발행, 조회 API
