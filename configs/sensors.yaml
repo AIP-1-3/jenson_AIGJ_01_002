@@ -12,14 +12,25 @@ sources:
   # 환경 센서 (CO₂·온도·습도) — ChirpStack 이 디코딩한 값은 object 아래에 있다
   - name: chirpstack_env
     topic: "application/{app_id}/device/{dev_eui}/event/up"
+    # 2026-10-20 확인한 장치 10대 (Milesight). 공간은 ChirpStack 태그 location 을 쓴다.
+    #   실습실(7): EM500-CO2 x2, AM107(CO₂·조도·PIR), EM300-TH x2, EM320-TH, WS302(소음)
+    #   사무실(2): AM103(CO₂), EM320-TH      사무실 밖(1): EM300-TH (외기에 가까운 기준)
+    # 장치를 옮기면 ChirpStack 태그만 바꾸면 되고 코드·설정은 그대로다.
     space:
-      from: deviceInfo.deviceName   # 장치 이름 그대로 공간으로. 이름이 공간과 다르면 map 으로 바꾼다
-      map: {}                       # 예) "AM319-01": classroom_1
+      from: deviceInfo.tags.location
       unmapped: keep
-    payload:                        # TODO: 장치 확인 결과(object 필드 이름)에 맞춘다
+    device:
+      from: deviceInfo.deviceName
+    payload:                        # 장치에 없는 필드는 건너뛴다
       co2: object.co2
       temperature: object.temperature
       humidity: object.humidity
+      pressure: object.pressure
+      tvoc: object.tvoc
+      illumination: object.illumination
+      pir_activity: object.activity   # AM107 재실 감지 — 과제 5 '직접 관찰' 보조 정답 후보
+      sound_laeq: object.LAeq         # WS302 소음 — 사용 여부 판단 보조 후보
+      battery: object.battery         # 배터리 방전 → 값 고정/끊김의 원인 설명용
     timestamp:
       field: time
       format: iso8601
@@ -30,6 +41,8 @@ sources:
     each: values                    # {"values": {"회의실": {...}}} 의 키가 공간 이름
     space:
       from: key
+    device:
+      from: unit_id
     payload:
       hvac_power: power
       hvac_mode: mode

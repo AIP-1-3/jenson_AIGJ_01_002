@@ -10,6 +10,8 @@ source 설정 요약:
               from: 토픽 자리표시자 이름, "key"(each 의 키), 또는 페이로드 경로(점 표기)
               map:  (선택) 원래 값 → 공간 이름 표. 표에 없으면 unmapped 규칙을 따른다.
               unmapped: keep(원래 값 그대로 저장, 기본) | drop(버림)
+  device:   (선택) 센서 장치 구분. from: 토픽 자리표시자 / "key" / 페이로드 경로. 없으면 "-".
+            한 공간에 같은 항목 센서가 여러 개일 때 시계열이 섞이지 않게 한다.
   payload:  저장 항목 이름 → 페이로드 경로(점 표기, 예: object.co2)
   timestamp: field(경로) + format(epoch_s | epoch_ms | iso8601). 없으면 수신 시각만 쓴다.
 """
@@ -27,6 +29,7 @@ _MISSING = object()
 @dataclass(frozen=True)
 class Reading:
     space: str
+    device: str
     metric: str
     value: float
     sensor_ts: datetime | None   # 센서가 찍은 시각 (없을 수 있음)
@@ -54,6 +57,7 @@ class Source:
 
         space = spec.get("space") or {"from": "space"}
         self.space_from: str = space["from"]
+        self.device_from: str | None = (spec.get("device") or {}).get("from")
         self.space_map: dict[str, str] = {str(k): str(v) for k, v in (space.get("map") or {}).items()}
         self.space_unmapped: str = space.get("unmapped", "keep")
         if self.space_unmapped not in ("keep", "drop"):
@@ -93,16 +97,26 @@ class Source:
         dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-    def resolve_space(self, topic_vars: dict[str, str], key: str | None, body: Any) -> str | None:
-        if self.space_from in self._topic_vars:
-            raw: Any = topic_vars.get(self.space_from)
-        elif self.space_from == "key":
+    def _lookup(self, source: str, topic_vars: dict[str, str], key: str | None, body: Any) -> str | None:
+        if source in self._topic_vars:
+            raw: Any = topic_vars.get(source)
+        elif source == "key":
             raw = key
         else:
-            raw = get_path(body, self.space_from)
+            raw = get_path(body, source)
         if raw is None or raw is _MISSING or raw == "":
             return None
-        raw = str(raw)
+        return str(raw)
+
+    def resolve_device(self, topic_vars: dict[str, str], key: str | None, body: Any) -> str:
+        if not self.device_from:
+            return "-"
+        return self._lookup(self.device_from, topic_vars, key, body) or "-"
+
+    def resolve_space(self, topic_vars: dict[str, str], key: str | None, body: Any) -> str | None:
+        raw = self._lookup(self.space_from, topic_vars, key, body)
+        if raw is None:
+            return None
         if raw in self.space_map:
             return self.space_map[raw]
         return raw if self.space_unmapped == "keep" else None
@@ -151,6 +165,7 @@ class Mapper:
                 space = src.resolve_space(topic_vars, key, body)
             if not space:
                 continue
+            device = src.resolve_device(topic_vars, key, body)
             for metric, path in src.payload_map.items():
                 raw = get_path(node, path)
                 if raw is _MISSING or raw is None:
@@ -160,4 +175,4 @@ class Mapper:
                 except (TypeError, ValueError):
                     continue
                 # 0ppm 같은 깨진 값도 일단 원본 그대로 저장한다. 제거는 전처리(과제 2)에서.
-                yield Reading(space, metric, value, sensor_ts, received_ts, src.name)
+                yield Reading(space, device, metric, value, sensor_ts, received_ts, src.name)
