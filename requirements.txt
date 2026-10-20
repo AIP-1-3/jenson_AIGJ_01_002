@@ -1,0 +1,20 @@
+# 공통 (Jetson·맥 모두)
+paho-mqtt>=2.1
+python-dotenv>=1.0
+PyYAML>=6.0
+numpy
+pandas
+pyarrow
+scikit-learn
+matplotlib
+influxdb-client>=1.40
+fastapi
+uvicorn
+
+# 테스트
+pytest
+
+# PyTorch 는 여기 넣지 않는다.
+#  - 맥: pip install torch
+#  - Jetson: PyPI 의 torch 는 GPU 미지원. JetPack 7.2 용 wheel 또는 jetson-containers 로 설치 (팀 공용 방법 사용)
+# TensorRT 는 JetPack 기본 제공 → venv 를 --system-site-packages 로 만들면 import 된다.

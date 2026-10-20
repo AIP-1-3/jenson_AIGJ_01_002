@@ -1,0 +1,31 @@
+# 실험·서비스 공통 설정. 학습과 서비스가 같은 값을 읽어야 전처리가 어긋나지 않는다 (과제 8-3).
+
+spaces:            # TODO: 실제 공간 ID 는 데이터 확인 후 맞춘다
+  - classroom_1
+  - classroom_2
+  - meeting_room
+  - lounge
+
+metrics: [co2, temperature, humidity]
+
+preprocess:
+  resample: 5min                 # 분석 간격 (과제 2-2, 근거는 reports/02_diagnosis.md 에)
+  valid_range:                   # 물리적으로 불가능한 값 제거 (과제 2-1)
+    co2: [350, 5000]
+    temperature: [-10, 50]
+    humidity: [0, 100]
+  short_gap_max_minutes: 10      # 이하면 보간, 초과면 결측으로 둔다
+
+split:                           # 시간순 분할 — 무작위 섞기 금지 (과제 2-3)
+  train_end: null                # 예: "2026-11-01"
+  valid_end: null
+
+forecast:
+  horizon_minutes: 60
+  step_minutes: 5
+  report_horizons: [5, 15, 30, 60]
+
+thresholds:
+  co2_ventilate_ppm: 1000
+  co2_critical_ppm: 1500
+  ventilation_alert_within_minutes: 30
