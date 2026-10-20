@@ -42,9 +42,9 @@
 - [ ] 채택 의견 (로컬 LLM 과 함께 올릴 메모리 예산 고려)
 
 ## 과제 7. 엣지 최적화
-- [ ] PyTorch CPU/GPU, ONNX Runtime, TensorRT FP16 × 배치 1·4 지연(평균, p95)
-- [ ] 변환 전후 차이 (CO₂ ≤1ppm, 분류 변화 ≤0.1%)
-- [ ] 전력·GPU·메모리 기록 (tegrastats), 측정 조건 (MAXN_SUPER, 클럭 고정 안 함, 반복·워밍업 횟수)
+- [x] PyTorch CPU/GPU, ONNX Runtime, TensorRT FP16 × 배치 1·4 지연(평균, p95) — 코드 완료, Jetson 실행 필요
+- [x] 변환 전후 차이 (CO₂ ≤1ppm, 분류 변화 ≤0.1% — 오토인코더 이상 판정으로 측정)
+- [x] 전력·GPU·메모리 기록 (tegrastats), 측정 조건 (MAXN_SUPER, 클럭 고정 안 함, 반복·워밍업 횟수)
 - [ ] 측정 시 다른 팀원 작업과 겹치지 않게 gpu-run.sh 락 안에서 측정
 
 ## 과제 8. 상시 추론 서비스
