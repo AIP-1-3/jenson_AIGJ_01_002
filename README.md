@@ -32,6 +32,16 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 .venv/bin/python -m tsinfer.data.diagnose     # 진단서 reports/02_diagnosis.md + 그림
 ```
 
+과제 3 GRU 예측 (PyTorch CPU 로 충분한 크기. 설치는 아래 한 번):
+
+```bash
+.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu   # NumPy 를 건드리지 않는 CPU 빌드
+tmux new -s train
+.venv/bin/python -m tsinfer.models.forecast --compare-time   # → models/forecast_gru.pt, reports/03_forecast.md
+```
+
+학습이 끝나면 `.env` 의 `SERVICE_MODEL=gru` 로 바꾸고 `systemctl --user restart tsinfer-service`.
+
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
 
 ```bash

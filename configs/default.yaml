@@ -29,6 +29,19 @@ forecast:
   step_minutes: 5
   report_horizons: [5, 15, 30, 60]
 
+model:                             # 과제 3 GRU (python -m tsinfer.models.forecast)
+  lookback_minutes: 120            # 진단서의 CO₂ 정점까지 시간 보고 조정
+  hidden: 64
+  layers: 1
+  dropout: 0.1
+  epochs: 40
+  batch_size: 256
+  lr: 0.001
+  patience: 6                      # 검증 손실이 이만큼 안 좋아지면 멈춤
+  threads: 3                       # 공용 보드: CPU 6코어 중 절반만
+  outdoor_space: 사무실 밖          # 외기 입력으로 쓰는 공간
+  seed: 42
+
 thresholds:
   co2_ventilate_ppm: 1000
   co2_critical_ppm: 1500

@@ -6,12 +6,14 @@ predict(wide, space) → {"co2": {5: 812.3, 10: ..., 60: ...}, "temperature": {.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
 
 TARGETS = ("co2", "temperature")
+log = logging.getLogger("predictors")
 
 
 class Forecaster(Protocol):
@@ -68,8 +70,39 @@ class Persistence:
         return out
 
 
+class GRUForecaster:
+    """과제 3 모델. 학습과 같은 forecast.make_windows 로 입력을 만든다 (과제 8-3)."""
+
+    def __init__(self, path=None):
+        from tsinfer.models import forecast
+
+        self._fc = forecast
+        self.model, self.spec = forecast.load(path or forecast.MODEL_PATH)
+        self.name = f"gru_v1(lookback={self.spec.lookback * self.spec.step_minutes}m)"
+
+    def predict(self, wide: pd.DataFrame, space: str) -> dict[str, dict[int, float]]:
+        if space not in self.spec.spaces or len(wide) < self.spec.lookback:
+            return {}
+        x, _, info = self._fc.make_windows(wide, self.spec, at=wide.index[-1:], with_target=False)
+        info_sp = info["space"].to_numpy() == space
+        if not info_sp.any():
+            return {}   # 최근 창에 결측이 있으면 예측하지 않는다 (서비스는 기준선 없이 빈 예측)
+        x, info = x[info_sp], info[info_sp].reset_index(drop=True)
+        pred = self._fc.decode(self._fc.predict_array(self.model, x), info, self.spec)
+        mins = [h * self.spec.step_minutes for h in self.spec.horizons]
+        out = {m: {hm: float(v) for hm, v in zip(mins, pred[m][0])} for m in pred}
+        if "co2" in out:
+            out["co2"] = {h: max(v, 400.0) for h, v in out["co2"].items()}
+        return out
+
+
 def load_forecaster(cfg: dict[str, Any], name: str | None = None) -> Forecaster:
     name = name or "trend"
     if name == "persistence":
         return Persistence(cfg)
+    if name == "gru":
+        try:
+            return GRUForecaster()
+        except Exception as e:  # 모델 파일·torch 가 없으면 기준선으로라도 서비스는 돈다
+            log.warning("GRU 모델을 못 불러와 추세 기준선으로 돕니다: %r", e)
     return TrendBaseline(cfg)
