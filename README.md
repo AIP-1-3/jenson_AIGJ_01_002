@@ -40,6 +40,12 @@ tmux new -s train
 .venv/bin/python -m tsinfer.models.forecast --compare-time   # → models/forecast_gru.pt, reports/03_forecast.md
 ```
 
+과제 4 이상 탐지 (고장 5종을 시험 기간에 넣어 규칙/오토인코더/결합 채점):
+
+```bash
+.venv/bin/python -m tsinfer.models.anomaly    # → models/anomaly_ae.pt, reports/04_anomaly.md
+```
+
 학습이 끝나면 `.env` 의 `SERVICE_MODEL=gru` 로 바꾸고 `systemctl --user restart tsinfer-service`.
 
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
