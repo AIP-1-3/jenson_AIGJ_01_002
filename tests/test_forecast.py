@@ -74,3 +74,24 @@ def test_gru_beats_persistence_and_service_predictor(tmp_path):
     assert set(p) == {"co2", "temperature"} and set(p["co2"]) == set(range(5, 61, 5))
     assert p["co2"][60] > w.loc[now, ("lab", "co2")]
     assert f.predict(w[w.index <= now], "outside") == {}
+
+
+def test_holidays_schedule_and_alpha():
+    import copy
+
+    cfg = copy.deepcopy(CFG)
+    cfg["holidays"] = ["2026-09-16"]                    # 검증 기간 수요일을 공휴일로
+    cfg["model"]["epochs"] = 2
+    sched = {"weekly": {sp: [{"days": ["mon", "tue", "wed", "thu", "fri"], "start": "09:00", "end": "12:00"}]
+                        for sp in ("lab", "meet")}}
+    w = _wide()
+    model, spec, res, _, _ = fc.run(cfg, w, log=lambda *_: None, schedule=sched)
+    assert spec.n_features == fc.FeatureSpec(spaces=spec.spaces, outdoor_space="outside", lookback=12,
+                                             horizons=spec.horizons, step_minutes=5,
+                                             timezone="Asia/Seoul").n_features + len(fc.SCHEDULE_OFFSETS)
+    assert set(spec.alpha) == {"co2", "temperature"} and all(0 <= a <= 1.2 for a in spec.alpha["co2"])
+    hol = pd.Timestamp("2026-09-16 01:00", tz="UTC")     # 수요일 10시 KST
+    assert not fc.is_workday(pd.DatetimeIndex([hol]), spec)[0]
+    f = fc.space_features(w, "lab", spec)
+    assert f.loc[hol, "sched_0"] == 0 and f.loc[pd.Timestamp("2026-09-15 01:00", tz="UTC"), "sched_0"] == 1
+    assert f.loc[pd.Timestamp("2026-09-14 23:30", tz="UTC"), "sched_60"] == 1   # 08:30 KST → 1시간 뒤 수업

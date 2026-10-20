@@ -37,7 +37,7 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 ```bash
 .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu   # NumPy 를 건드리지 않는 CPU 빌드
 tmux new -s train
-.venv/bin/python -m tsinfer.models.forecast --compare-time   # → models/forecast_gru.pt, reports/03_forecast.md
+.venv/bin/python -m tsinfer.models.forecast --compare-time --schedule   # → models/forecast_gru.pt, reports/03_forecast.md
 ```
 
 과제 4 이상 탐지 (고장 5종을 시험 기간에 넣어 규칙/오토인코더/결합 채점):
@@ -77,6 +77,12 @@ tmux new -s train
 ```
 
 상시 가동은 [tsinfer-collector.service](deploy/systemd/tsinfer-collector.service), [tsinfer-service.service](deploy/systemd/tsinfer-service.service) 주석대로 user 서비스로 등록한다.
+
+과제 2~7 보고서를 한 번에 (tmux 안에서, 6·7 은 자동으로 GPU 락 사용):
+
+```bash
+./scripts/run_all.sh          # 또는 ./scripts/run_all.sh 3 4  처럼 골라서
+```
 
 ## 구조
 
