@@ -4,14 +4,16 @@
 #   timetable    : 실제 수업 시간표·회의실 예약표를 weekly/exceptions 에 옮긴 것
 #   placeholder  : 시간표를 받기 전 임시 가정 (평일 9~18시) — 해석에 한계를 꼭 적는다
 # 직접 관찰 기록이 있으면 observations_csv 가 시간표보다 우선한다.
-source: placeholder
+source: timetable
+# 출처 메모 (과제 5 보고서 측정 조건에 그대로 찍힌다)
+note: "실습실 수업 평일 09:00~18:00 (민서 확인, 2026-10-20). 사무실은 근무 시간과 같다고 가정. 회의실은 예약표가 없어 평일 9~18시로 가정 — 회의실 사용 여부 정답은 신뢰도가 낮다"
 
 weekly:                # 요일: mon tue wed thu fri sat sun
-  실습실:
+  실습실:              # 수업 시간표 (민서, 2026-10-20)
     - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
-  사무실:
+  사무실:              # 가정: 근무 시간
     - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
-  회의실:
+  회의실:              # 가정: 예약표 받으면 실제 예약으로 교체
     - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
 
 # 휴일·특강 등 예외. occupied: false 면 그 구간을 비어 있음으로 덮어쓴다.
