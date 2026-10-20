@@ -11,6 +11,7 @@ matplotlib
 influxdb-client>=1.40
 fastapi
 uvicorn
+httpx                # fastapi TestClient (테스트)
 
 # 테스트
 pytest

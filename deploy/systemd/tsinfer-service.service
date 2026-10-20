@@ -1,0 +1,22 @@
+# 상시 추론 서비스 (과제 8) — 수집기와 같은 방식으로 user 서비스 등록
+#   cp deploy/systemd/tsinfer-service.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tsinfer-service
+# 상태: systemctl --user status tsinfer-service / 로그: journalctl --user -u tsinfer-service -f
+
+[Unit]
+Description=tsinfer inference service (API + MQTT)
+After=network-online.target tsinfer-collector.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/jenson_AIGJ_01_002
+Environment=PYTHONPATH=%h/jenson_AIGJ_01_002/src
+ExecStart=%h/jenson_AIGJ_01_002/.venv/bin/python -m tsinfer.service
+Restart=always
+RestartSec=5
+# 공용 장비 보호: 모델이 커져도 1.5GB 를 넘으면 이 프로세스만 재시작된다.
+MemoryMax=1500M
+
+[Install]
+WantedBy=default.target
