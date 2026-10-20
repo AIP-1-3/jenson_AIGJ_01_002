@@ -3,9 +3,11 @@
 #   ./scripts/run_all.sh            # 전부
 #   ./scripts/run_all.sh 4 5        # 고른 과제만
 # 무거운 단계(6·7)는 팀 GPU 락(gpu-run.sh) 안에서 돈다. 로그: logs/run_all_<시각>.log
+# 진행 보기: tail -f "$(ls -t logs/run_all_*.log | head -1)"
 set -uo pipefail
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
+export PYTHONUNBUFFERED=1   # 에폭 진행이 로그에 바로 찍히게 (파일로 보내면 print 가 버퍼에 쌓임)
 GPU_RUN="$HOME/jetson_orin/scripts/gpu-run.sh"
 [[ -x "$GPU_RUN" ]] || GPU_RUN=""
 mkdir -p logs reports
