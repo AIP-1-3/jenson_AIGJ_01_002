@@ -166,6 +166,15 @@ def pick_threshold(y: np.ndarray, p: np.ndarray, recall_target: float = RECALL_T
     return float(pos[k]) if k < len(pos) else 0.5
 
 
+def pick_threshold_f1(y: np.ndarray, p: np.ndarray) -> float:
+    """macro-F1 이 가장 큰 확률 임계값. 재현율 목표와 macro-F1 은 서로 당기는 관계라 두 운영점을 함께 보고한다."""
+    from sklearn.metrics import f1_score
+
+    cands = np.unique(np.quantile(p, np.linspace(0.5, 0.999, 200)))
+    best = max(cands, key=lambda t: f1_score(y, (p >= t).astype(int), average="macro", zero_division=0))
+    return float(best)
+
+
 def scores(y: np.ndarray, pred: np.ndarray) -> dict[str, float]:
     from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 
@@ -237,7 +246,7 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, sched: dict[str, Any], observat
         info[task] = {"train_pos": int(tr[ycol].sum()), "valid_pos": int(va[ycol].sum()), "test_pos": int(y_te.sum())}
         for name in make_models(seed):
             model = make_models(seed)[name]
-            thr = 0.5
+            thr, thr_f1 = 0.5, None
             if task == "ventilation":
                 # 임계값: 학습+검증 기간 시간순 교차 예측(OOF)에서 재현율 목표를 만족하는 값.
                 # 검증 기간만 쓰면 양성이 적어(연휴) 임계값이 흔들린다. 최종 모델은 학습+검증으로 다시 학습.
@@ -246,9 +255,15 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, sched: dict[str, Any], observat
                 okp = ~np.isnan(p_oof)
                 if y_fit[okp].sum() > 0:
                     thr = pick_threshold(y_fit[okp], p_oof[okp])
+                    thr_f1 = pick_threshold_f1(y_fit[okp], p_oof[okp])
             model.fit(fit_df[fx], fit_df[ycol].astype(int))
-            pred = (model.predict_proba(te[fx])[:, 1] >= thr).astype(int)
+            p_te = model.predict_proba(te[fx])[:, 1]
+            pred = (p_te >= thr).astype(int)
             rows[name] = {**scores(y_te, pred), "threshold": round(thr, 3)}
+            if thr_f1 is not None:
+                rows[f"{name} (F1 최대 운영점)"] = {**scores(y_te, (p_te >= thr_f1).astype(int)),
+                                                  "threshold": round(thr_f1, 3)}
+                thresholds[f"{task}_{name}_f1"] = thr_f1
             fitted[f"{task}_{name}"] = model
             thresholds[f"{task}_{name}"] = thr
             errors[f"{task}_{name}"] = error_cases(te, y_te, pred, tz)
@@ -295,7 +310,8 @@ def main() -> int:
         f"- 환기 경보 입력 {len(feats['ventilation'])}개: 위 + 시각·요일",
         f"- 사용 여부는 학습 기간으로 학습, 임계값 0.5",
         f"- 환기 경보: 학습+검증 기간을 시간순 {CV_FOLDS}구간으로 나눈 교차 예측에서 재현율 ≥{RECALL_TARGET:.0%} 인 "
-        f"가장 높은 확률값을 임계값으로, 최종 모델은 학습+검증으로 다시 학습. 양성 수 "
+        f"가장 높은 확률값을 임계값으로(재현율 운영점), 같은 교차 예측에서 macro-F1 이 가장 큰 값도 함께(F1 최대 운영점). "
+        f"최종 모델은 학습+검증으로 다시 학습. 양성 수 "
         + (", ".join(f"{k} {v}" for k, v in info.get("ventilation", {}).items()) or "-"),
         "",
     ]

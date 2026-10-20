@@ -93,13 +93,39 @@ def inject(wide: pd.DataFrame, spaces: list[str], per_kind: int = 15, seed: int 
 
 # ---------------------------------------------------------------- 규칙 (서비스 rules.py 와 같은 기준값)
 
-NOISE_WIN = 12            # 잡음 규칙: 최근 1시간(12칸) 5분 변화량의 표준편차
+NOISE_WIN = 12            # 잡음 규칙: 최근 1시간(12칸) '변화량의 변화량'(2차 차분)의 표준편차
 NOISE_Q = 0.999           # 임계값 = 학습+검증(정상) 기간의 이 분위수 × NOISE_MARGIN, 공간·항목별
 NOISE_MARGIN = 1.2
+STUCK_Q = 0.999           # 값 고정 규칙: 정상 기간에 '같은 값이 이어진 길이'의 이 분위수보다 길어야 경보
 
 
 def diff_std(s: pd.Series, win: int = NOISE_WIN) -> pd.Series:
-    return s.diff().rolling(win, min_periods=win // 2).std()
+    """2차 차분은 사람이 들어와 CO₂ 가 꾸준히 오르는 추세(1차 차분이 큼)에는 거의 0 이고,
+    칸마다 튀는 잡음에만 커진다. 1차 차분으로 재면 입실 때 상승이 잡음처럼 보여 임계값이 너무 높아진다."""
+    return s.diff().diff().rolling(win, min_periods=win // 2).std()
+
+
+def flat_run_steps(s: pd.Series) -> pd.Series:
+    """각 시점이 속한 '직전 값과 같은 값이 이어진 구간'의 길이(칸). 결측은 0."""
+    same = s.notna() & (s.diff() == 0)
+    grp = (~same).cumsum()
+    run = same.groupby(grp).transform("sum") + 1
+    return run.where(s.notna(), 0)
+
+
+def fit_stuck_steps(wide_normal: pd.DataFrame, spaces: list[str], step_min: int = 5) -> dict[tuple[str, str], int]:
+    """공간·항목별 값 고정 판정 길이. 기본값(STUCK_MIN)과, 정상 기간에 실제로 같은 값이 이어진 길이의
+    상위 분위수 중 긴 쪽. 빈 회의실처럼 온도가 분해능(0.1℃) 안에서 몇 시간씩 그대로인 곳이 헛경보를 내지 않게."""
+    out = {}
+    for sp in spaces:
+        for m in METRICS:
+            base = STUCK_MIN[m] // step_min
+            if (sp, m) not in wide_normal:
+                continue
+            run = flat_run_steps(wide_normal[(sp, m)])
+            q = run[run > 0].quantile(STUCK_Q)
+            out[(sp, m)] = int(max(base, (q if pd.notna(q) else 0) + 1))
+    return out
 
 
 def fit_noise_thresholds(wide_normal: pd.DataFrame, spaces: list[str]) -> dict[tuple[str, str], float]:
@@ -115,7 +141,8 @@ def fit_noise_thresholds(wide_normal: pd.DataFrame, spaces: list[str]) -> dict[t
 
 
 def rule_flags(wide: pd.DataFrame, spaces: list[str], step_min: int = 5,
-               noise_thr: dict[tuple[str, str], float] | None = None) -> dict[str, pd.DataFrame]:
+               noise_thr: dict[tuple[str, str], float] | None = None,
+               stuck_steps: dict[tuple[str, str], int] | None = None) -> dict[str, pd.DataFrame]:
     """공간별 (시점 × 원인 항목) 불리언. 원인 이름: '<규칙>:<항목>'.
     noise_thr 가 있으면 '1시간 변화량 표준편차가 정상 기간 최고 수준을 넘는다' 잡음 규칙을 더한다."""
     out = {}
@@ -128,7 +155,7 @@ def rule_flags(wide: pd.DataFrame, spaces: list[str], step_min: int = 5,
             s = wide[(sp, m)]
             allna &= s.isna()
             f[f"spike:{m}"] = (s.diff().abs() >= SPIKE[m]) | (s.diff(-1).abs() >= SPIKE[m])
-            n = STUCK_MIN[m] // step_min
+            n = (stuck_steps or {}).get((sp, m), STUCK_MIN[m] // step_min)
             r = s.rolling(n, min_periods=n)
             f[f"stuck:{m}"] = (r.max() - r.min()) == 0    # rolling std 는 긴 시계열에서 0 이 안 나올 수 있다
             lo, hi = VALID[m]
@@ -292,8 +319,9 @@ def evaluate(flags: dict[str, pd.DataFrame], faults: list[Fault], days: float) -
 
 def method_flags(method: str, wide: pd.DataFrame, spaces: list[str], ae: AE | None,
                  threshold: float | None = None,
-                 noise_thr: dict[tuple[str, str], float] | None = None) -> dict[str, pd.DataFrame]:
-    rules = rule_flags(wide, spaces, noise_thr=noise_thr)
+                 noise_thr: dict[tuple[str, str], float] | None = None,
+                 stuck_steps: dict[tuple[str, str], int] | None = None) -> dict[str, pd.DataFrame]:
+    rules = rule_flags(wide, spaces, noise_thr=noise_thr, stuck_steps=stuck_steps)
     if method == "rules":
         return rules
     aef = {sp: ae.flags(wide, sp, threshold) for sp in spaces}
@@ -339,15 +367,19 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, per_kind: int = 15, epochs: int
     train, valid, test = split_by_time(wide, cfg)
     ae = fit_ae(train, spaces, epochs=epochs, threads=cfg.get("model", {}).get("threads", 3))
     ae.threshold = pick_threshold(ae, valid, spaces)
-    noise_thr = fit_noise_thresholds(pd.concat([train, valid]), spaces)
+    normal = pd.concat([train, valid])
+    noise_thr = fit_noise_thresholds(normal, spaces)
+    stuck_steps = fit_stuck_steps(normal, spaces)
+    kw = {"noise_thr": noise_thr, "stuck_steps": stuck_steps}
     test_inj, faults = inject(test, spaces, per_kind=per_kind, seed=seed)
     days = (test.index[-1] - test.index[0]) / pd.Timedelta("1D")
-    results = {m: evaluate(method_flags(m, test_inj, spaces, ae, noise_thr=noise_thr), faults, days)
+    results = {m: evaluate(method_flags(m, test_inj, spaces, ae, **kw), faults, days)
                for m in ("rules", "ae", "combined")}
-    clean_flags = {m: method_flags(m, test, spaces, ae, noise_thr=noise_thr) for m in ("rules", "ae", "combined")}
+    clean_flags = {m: method_flags(m, test, spaces, ae, **kw) for m in ("rules", "ae", "combined")}
     clean_fa = {m: evaluate(f, [], days)["false_alarms_per_day"].iloc[0] for m, f in clean_flags.items()}
     curve = threshold_curve(ae, test_inj, faults, spaces, days)
-    diag = {"noise_thr": noise_thr, "clean_causes": alarm_causes(clean_flags["combined"], days)}
+    diag = {"noise_thr": noise_thr, "stuck_steps": stuck_steps,
+            "clean_causes": alarm_causes(clean_flags["combined"], days)}
     return ae, spaces, results, clean_fa, curve, faults, (test.index[0], test.index[-1]), diag
 
 
@@ -394,7 +426,9 @@ def main() -> int:
         f"- 고장 주입: 종류별 {args.per_kind}건 (seed 0), 지속 {DURATION_MIN} 분, 고장 사이 최소 6시간",
         f"- 오토인코더: 1시간(12칸)×3항목×(값, 5분 변화량) 창, 72→32→8→32→72, {args.epochs} 에폭, 임계값 {ae.threshold:.3f} (검증 기간 경보 ≤0.5회/일)",
         f"- 규칙: 급변 {SPIKE}, 값 고정 {STUCK_MIN}분, 범위 밖 {VALID}, 10분 이상 결측",
-        f"- 잡음 규칙: 최근 1시간 5분 변화량 표준편차 > 정상(학습+검증) 기간 {NOISE_Q:.1%} 분위수 × {NOISE_MARGIN} "
+        f"- 값 고정 판정 길이(분): 기본값과 정상(학습+검증) 기간 같은 값 연속 길이 {STUCK_Q:.1%} 분위수 중 긴 쪽: "
+        + ", ".join(f"{sp}/{m} {n * 5}" for (sp, m), n in diag["stuck_steps"].items()),
+        f"- 잡음 규칙: 최근 1시간 2차 차분 표준편차 > 정상(학습+검증) 기간 {NOISE_Q:.1%} 분위수 × {NOISE_MARGIN} "
         f"(공간·항목별, 시험 기간은 보지 않음): "
         + ", ".join(f"{sp}/{m} {v:.2f}" for (sp, m), v in diag["noise_thr"].items()),
         f"- 탐지 = 고장 시작~끝+{int(GRACE.total_seconds() // 60)}분 안의 경보, 헛경보 = 고장과 겹치지 않는 경보 사건 (전체 공간 합 / 일)",
