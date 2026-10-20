@@ -57,7 +57,7 @@ def test_labels():
 
 
 def test_classifiers_beat_rules_and_vent_recall():
-    res, fitted, thr, errors, feats, df = st.run(CFG, _wide(), SCHED)
+    res, fitted, thr, errors, feats, df, info = st.run(CFG, _wide(), SCHED)
     occ, vent = res["occupied"], res["ventilation"]
     assert max(occ.loc["logreg", "macro_f1"], occ.loc["hgb", "macro_f1"]) > occ.loc["rule", "macro_f1"]
     assert vent.loc["hgb", "recall"] >= 0.8

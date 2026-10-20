@@ -93,8 +93,31 @@ def inject(wide: pd.DataFrame, spaces: list[str], per_kind: int = 15, seed: int 
 
 # ---------------------------------------------------------------- 규칙 (서비스 rules.py 와 같은 기준값)
 
-def rule_flags(wide: pd.DataFrame, spaces: list[str], step_min: int = 5) -> dict[str, pd.DataFrame]:
-    """공간별 (시점 × 원인 항목) 불리언. 원인 이름: '<규칙>:<항목>'."""
+NOISE_WIN = 12            # 잡음 규칙: 최근 1시간(12칸) 5분 변화량의 표준편차
+NOISE_Q = 0.999           # 임계값 = 학습+검증(정상) 기간의 이 분위수 × NOISE_MARGIN, 공간·항목별
+NOISE_MARGIN = 1.2
+
+
+def diff_std(s: pd.Series, win: int = NOISE_WIN) -> pd.Series:
+    return s.diff().rolling(win, min_periods=win // 2).std()
+
+
+def fit_noise_thresholds(wide_normal: pd.DataFrame, spaces: list[str]) -> dict[tuple[str, str], float]:
+    """시험 기간을 보지 않고 정상 기간에서만 잡음 규칙 임계값을 정한다."""
+    out = {}
+    for sp in spaces:
+        for m in METRICS:
+            if (sp, m) in wide_normal:
+                q = diff_std(wide_normal[(sp, m)]).quantile(NOISE_Q)
+                if pd.notna(q) and q > 0:
+                    out[(sp, m)] = float(q) * NOISE_MARGIN
+    return out
+
+
+def rule_flags(wide: pd.DataFrame, spaces: list[str], step_min: int = 5,
+               noise_thr: dict[tuple[str, str], float] | None = None) -> dict[str, pd.DataFrame]:
+    """공간별 (시점 × 원인 항목) 불리언. 원인 이름: '<규칙>:<항목>'.
+    noise_thr 가 있으면 '1시간 변화량 표준편차가 정상 기간 최고 수준을 넘는다' 잡음 규칙을 더한다."""
     out = {}
     for sp in spaces:
         f = pd.DataFrame(index=wide.index)
@@ -110,6 +133,8 @@ def rule_flags(wide: pd.DataFrame, spaces: list[str], step_min: int = 5) -> dict
             f[f"stuck:{m}"] = (r.max() - r.min()) == 0    # rolling std 는 긴 시계열에서 0 이 안 나올 수 있다
             lo, hi = VALID[m]
             f[f"range:{m}"] = s.notna() & ~s.between(lo, hi)
+            if noise_thr and (sp, m) in noise_thr:
+                f[f"noise:{m}"] = diff_std(s) > noise_thr[(sp, m)]
         f["gap:*"] = allna & allna.rolling(2, min_periods=2).sum().eq(2)   # 10분 이상 연속 결측
         out[sp] = f.fillna(False).astype(bool)
     return out
@@ -266,8 +291,9 @@ def evaluate(flags: dict[str, pd.DataFrame], faults: list[Fault], days: float) -
 
 
 def method_flags(method: str, wide: pd.DataFrame, spaces: list[str], ae: AE | None,
-                 threshold: float | None = None) -> dict[str, pd.DataFrame]:
-    rules = rule_flags(wide, spaces)
+                 threshold: float | None = None,
+                 noise_thr: dict[tuple[str, str], float] | None = None) -> dict[str, pd.DataFrame]:
+    rules = rule_flags(wide, spaces, noise_thr=noise_thr)
     if method == "rules":
         return rules
     aef = {sp: ae.flags(wide, sp, threshold) for sp in spaces}
@@ -287,6 +313,25 @@ def threshold_curve(ae: AE, wide_inj: pd.DataFrame, faults: list[Fault], spaces:
     return pd.DataFrame(rows)
 
 
+def alarm_causes(flags: dict[str, pd.DataFrame], days: float, top: int = 10) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """원본(고장 없음) 경보 사건을 원인 규칙별로 세고, 사건 목록 앞쪽을 돌려준다.
+    원본 경보가 진짜 이상(수집 끊김 등)인지 헛경보인지 사람이 확인할 수 있게 하려는 것."""
+    rows = []
+    for sp, fl in flags.items():
+        for s_, e in events(fl.any(axis=1)):
+            seg = fl.loc[s_:e]
+            causes = sorted(c for c in seg.columns if seg[c].any())
+            rows.append({"space": sp, "start": s_, "end": e,
+                         "minutes": int((e - s_).total_seconds() // 60) + 5, "causes": ", ".join(causes)})
+    ev = pd.DataFrame(rows, columns=["space", "start", "end", "minutes", "causes"])
+    if ev.empty:
+        return pd.DataFrame(columns=["events", "per_day"]), ev
+    kinds = ev["causes"].str.split(", ").explode()
+    by = kinds.value_counts().rename("events").to_frame()
+    by["per_day"] = (by["events"] / days).round(2)
+    return by, ev.sort_values("start").head(top)
+
+
 def run(cfg: dict[str, Any], wide: pd.DataFrame, per_kind: int = 15, epochs: int = 30, seed: int = 0):
     from tsinfer.data.split import split_by_time
 
@@ -294,13 +339,16 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, per_kind: int = 15, epochs: int
     train, valid, test = split_by_time(wide, cfg)
     ae = fit_ae(train, spaces, epochs=epochs, threads=cfg.get("model", {}).get("threads", 3))
     ae.threshold = pick_threshold(ae, valid, spaces)
+    noise_thr = fit_noise_thresholds(pd.concat([train, valid]), spaces)
     test_inj, faults = inject(test, spaces, per_kind=per_kind, seed=seed)
     days = (test.index[-1] - test.index[0]) / pd.Timedelta("1D")
-    results = {m: evaluate(method_flags(m, test_inj, spaces, ae), faults, days) for m in ("rules", "ae", "combined")}
-    clean_fa = {m: evaluate(method_flags(m, test, spaces, ae), [], days)["false_alarms_per_day"].iloc[0]
-                for m in ("rules", "ae", "combined")}
+    results = {m: evaluate(method_flags(m, test_inj, spaces, ae, noise_thr=noise_thr), faults, days)
+               for m in ("rules", "ae", "combined")}
+    clean_flags = {m: method_flags(m, test, spaces, ae, noise_thr=noise_thr) for m in ("rules", "ae", "combined")}
+    clean_fa = {m: evaluate(f, [], days)["false_alarms_per_day"].iloc[0] for m, f in clean_flags.items()}
     curve = threshold_curve(ae, test_inj, faults, spaces, days)
-    return ae, spaces, results, clean_fa, curve, faults, (test.index[0], test.index[-1])
+    diag = {"noise_thr": noise_thr, "clean_causes": alarm_causes(clean_flags["combined"], days)}
+    return ae, spaces, results, clean_fa, curve, faults, (test.index[0], test.index[-1]), diag
 
 
 def main() -> int:
@@ -314,7 +362,7 @@ def main() -> int:
 
     cfg = load_yaml("default.yaml")
     wide = to_wide(clean(load_raw(metrics=cfg["metrics"]), cfg)[0], cfg)
-    ae, spaces, results, clean_fa, curve, faults, (t0, t1) = run(cfg, wide, args.per_kind, args.epochs)
+    ae, spaces, results, clean_fa, curve, faults, (t0, t1), diag = run(cfg, wide, args.per_kind, args.epochs)
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": ae.model.state_dict(), "stats": ae.stats, "L": ae.L, "threshold": ae.threshold}, MODEL_PATH)
 
@@ -346,6 +394,9 @@ def main() -> int:
         f"- 고장 주입: 종류별 {args.per_kind}건 (seed 0), 지속 {DURATION_MIN} 분, 고장 사이 최소 6시간",
         f"- 오토인코더: 1시간(12칸)×3항목×(값, 5분 변화량) 창, 72→32→8→32→72, {args.epochs} 에폭, 임계값 {ae.threshold:.3f} (검증 기간 경보 ≤0.5회/일)",
         f"- 규칙: 급변 {SPIKE}, 값 고정 {STUCK_MIN}분, 범위 밖 {VALID}, 10분 이상 결측",
+        f"- 잡음 규칙: 최근 1시간 5분 변화량 표준편차 > 정상(학습+검증) 기간 {NOISE_Q:.1%} 분위수 × {NOISE_MARGIN} "
+        f"(공간·항목별, 시험 기간은 보지 않음): "
+        + ", ".join(f"{sp}/{m} {v:.2f}" for (sp, m), v in diag["noise_thr"].items()),
         f"- 탐지 = 고장 시작~끝+{int(GRACE.total_seconds() // 60)}분 안의 경보, 헛경보 = 고장과 겹치지 않는 경보 사건 (전체 공간 합 / 일)",
         "",
         "## 결과 (탐지율 %, 지연 분, 원인 항목 일치 %, 헛경보 회/일)",
@@ -358,6 +409,14 @@ def main() -> int:
         "원본에도 진짜 이상이 있을 수 있어, 이 값이 0 이 아니면 경보 시각을 찾아 실제 사례로 확인한다.",
         "",
         pd.Series(clean_fa, name="false_alarms_per_day").to_frame().to_markdown(),
+        "",
+        "### 원본 경보의 원인 규칙 (결합 기준, 한 사건에 원인이 여럿이면 각각 셈)",
+        "",
+        diag["clean_causes"][0].to_markdown() if len(diag["clean_causes"][0]) else "(경보 없음)",
+        "",
+        "### 원본 경보 사건 (앞쪽 10건, UTC) — 실제 수집 끊김·센서 이상인지 확인",
+        "",
+        diag["clean_causes"][1].to_markdown(index=False) if len(diag["clean_causes"][1]) else "(경보 없음)",
         "",
         "## 임계값 - 헛경보 곡선 (오토인코더)",
         "",

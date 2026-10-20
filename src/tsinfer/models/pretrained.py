@@ -8,7 +8,7 @@
   1) 정확도: 5·15·30·60분 MAE (Chronos 는 중앙값 예측)
   2) 구간 적중률: 실제값이 Chronos 10~90% 구간 안에 들어온 비율 (잘 맞춘 구간이면 약 80%)
   3) 추론 시간: 배치 1·전체 배치 지연 (워밍업 후 반복 평균, p95)
-  4) 메모리: 프로세스 최대 RSS(+ GPU 면 최대 할당량)
+  4) 메모리: 모델 적재 전·추론 후 RSS 차이(모델 몫) + 프로세스 최대 RSS(+ GPU 면 최대 할당량)
 학습은 하지 않는다 (zero-shot). 입력은 각 시점까지의 과거 CO₂·온도 한 줄씩(단변량)이다.
 """
 from __future__ import annotations
@@ -55,6 +55,18 @@ def truth(s: pd.Series, points: pd.DatetimeIndex, horizons: list[int], step_min:
 
 def peak_mem_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024   # 리눅스: KB
+
+
+def rss_mb() -> float:
+    """지금 이 순간의 RSS. 최고치(ru_maxrss)는 데이터 적재 때 이미 올라가 있어 모델 몫을 가려낼 수 없다."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return float("nan")
 
 
 def load_chronos(name: str, device: str):
@@ -174,14 +186,17 @@ def main() -> int:
     points = eval_points(test.index, args.every, args.max_points, cfg["forecast"]["horizon_minutes"])
     ctx_len = args.context_hours * 60 // step
 
-    mem0 = peak_mem_mb()
+    mem0, peak0 = rss_mb(), peak_mem_mb()
     t0 = time.perf_counter()
     pipe = load_chronos(args.model, args.device)
     load_s = time.perf_counter() - t0
     res, cov = compare(wide, points, spaces, lambda c, h: chronos_predict(pipe, c, h), ctx_len, H, step,
                        cfg["forecast"]["report_horizons"], gru=(g := gru_at(wide, points)) and g[0])
     lat = latency(pipe, contexts(wide[(spaces[0], "co2")], points, ctx_len), H, device=args.device)
-    mem = {"process_peak_rss_mb": round(peak_mem_mb(), 0), "rss_before_load_mb": round(mem0, 0)}
+    mem1 = rss_mb()
+    mem = {"rss_before_load_mb": round(mem0, 0), "rss_after_inference_mb": round(mem1, 0),
+           "model_increase_mb": round(mem1 - mem0, 0),
+           "process_peak_rss_mb": round(peak_mem_mb(), 0), "peak_before_load_mb": round(peak0, 0)}
     if args.device == "cuda":
         mem["cuda_peak_alloc_mb"] = round(torch.cuda.max_memory_allocated() / 2**20, 0)
     n_params = sum(p.numel() for p in pipe.inner_model.parameters()) if hasattr(pipe, "inner_model") else None
