@@ -29,6 +29,7 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 
 ```bash
 .venv/bin/python -m tsinfer.data.baselines
+.venv/bin/python -m tsinfer.data.diagnose     # 진단서 reports/02_diagnosis.md + 그림
 ```
 
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):

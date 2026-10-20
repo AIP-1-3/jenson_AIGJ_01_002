@@ -9,6 +9,7 @@ spaces:
   - 사무실 밖
 
 metrics: [co2, temperature, humidity]
+timezone: Asia/Seoul              # 시간대 패턴·요일 판단용 (저장은 UTC)
 
 preprocess:
   resample: 5min                 # 분석 간격 (과제 2-2, 근거는 reports/02_diagnosis.md 에)
