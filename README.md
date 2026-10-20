@@ -52,6 +52,13 @@ tmux new -s train
 .venv/bin/python -m tsinfer.models.state      # → models/state.joblib, reports/05_state.md
 ```
 
+과제 6 사전학습 모델 비교 (Chronos-Bolt zero-shot, 첫 실행 때 모델을 내려받는다):
+
+```bash
+.venv/bin/pip install chronos-forecasting "numpy<2"
+~/jetson_orin/scripts/gpu-run.sh -- .venv/bin/python -m tsinfer.models.pretrained   # → reports/06_pretrained.md
+```
+
 학습이 끝나면 `.env` 의 `SERVICE_MODEL=gru` 로 바꾸고 `systemctl --user restart tsinfer-service`.
 
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
