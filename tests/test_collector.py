@@ -43,3 +43,45 @@ def test_store_dedups_retransmission(tmp_path):
     msg = b'{"co2": 612, "ts": 1760918400000}'
     assert store.write(m.parse("sensors/lounge/env", msg, NOW)) == 1
     assert store.write(m.parse("sensors/lounge/env", msg, NOW)) == 0
+
+
+# --- 실제 브로커 형식 (2026-10-20 확인) ---
+from tsinfer.config import load_yaml
+
+CHIRP = (
+    b'{"deduplicationId":"f89b","time":"2026-10-20T01:38:19.287+00:00",'
+    b'"deviceInfo":{"deviceName":"AM319-01","devEui":"24e124725d081175"},'
+    b'"object":{"co2":612,"temperature":23.4,"humidity":41.5}}'
+)
+XFLOW = (
+    b'{"ts":1792459940616,"values":{"\xea\xb0\x9c\xeb\xb0\x9c\xec\x8b\xa4-\xec\x8b\xa4\xeb\x82\xb4\xea\xb8\xb0":'
+    b'{"current_humidity":48,"current_temperature":22.3,"power":false,"target_temperature":18}}}'
+)
+
+
+def test_repo_sensors_yaml_parses_chirpstack_uplink():
+    out = Mapper(load_yaml("sensors.yaml")).parse(
+        "application/96b4/device/24e124725d081175/event/up", CHIRP, NOW
+    )
+    assert {(r.space, r.metric, r.value) for r in out} == {
+        ("AM319-01", "co2", 612.0), ("AM319-01", "temperature", 23.4), ("AM319-01", "humidity", 41.5)
+    }
+    assert out[0].sensor_ts.isoformat() == "2026-10-20T01:38:19.287000+00:00"
+
+
+def test_repo_sensors_yaml_parses_xflow_idu_per_room():
+    out = Mapper(load_yaml("sensors.yaml")).parse("xflow/hvacr/idu/5442/status", XFLOW, NOW)
+    got = {(r.space, r.metric, r.value) for r in out}
+    assert ("개발실-실내기", "hvac_power", 0.0) in got
+    assert ("개발실-실내기", "hvac_current_temperature", 22.3) in got
+
+
+def test_space_map_and_drop_unmapped():
+    cfg = {"sources": [{
+        "name": "c", "topic": "application/{app}/device/{eui}/event/up",
+        "space": {"from": "eui", "map": {"24e124725d081175": "lounge"}, "unmapped": "drop"},
+        "payload": {"co2": "object.co2"},
+    }]}
+    m = Mapper(cfg)
+    assert m.parse("application/a/device/24e124725d081175/event/up", CHIRP, NOW)[0].space == "lounge"
+    assert m.parse("application/a/device/ffff/event/up", CHIRP, NOW) == []
