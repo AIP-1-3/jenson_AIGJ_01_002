@@ -77,7 +77,8 @@ def ventilation_labels(co2: pd.Series, threshold: float, within_steps: int) -> p
 
 # ---------------------------------------------------------------- 입력 특성 (센서만)
 
-def features(wide: pd.DataFrame, space: str, outdoor: str | None, tz: str, step_min: int = 5) -> pd.DataFrame:
+def features(wide: pd.DataFrame, space: str, outdoor: str | None, tz: str, step_min: int = 5,
+             holidays: list[str] | tuple = ()) -> pd.DataFrame:
     per_h = 60 // step_min
     f = pd.DataFrame(index=wide.index)
     for m in ("co2", "temperature", "humidity"):
@@ -95,7 +96,8 @@ def features(wide: pd.DataFrame, space: str, outdoor: str | None, tz: str, step_
     hour = local.hour + local.minute / 60
     f["hour_sin"] = np.sin(2 * np.pi * hour / 24)
     f["hour_cos"] = np.cos(2 * np.pi * hour / 24)
-    f["weekday"] = (local.dayofweek < 5).astype(float)
+    hol = np.isin(local.strftime("%Y-%m-%d"), [str(d) for d in holidays])
+    f["weekday"] = ((local.dayofweek < 5) & ~hol).astype(float)
     return f
 
 
@@ -109,7 +111,7 @@ def dataset(wide: pd.DataFrame, cfg: dict[str, Any], sched: dict[str, Any], obse
     outdoor = cfg.get("model", {}).get("outdoor_space")
     parts = []
     for sp in spaces:
-        f = features(wide, sp, outdoor, tz, step)
+        f = features(wide, sp, outdoor, tz, step, cfg.get("holidays", []))
         f["space"] = sp
         f["y_occ"] = occ[sp]
         f["y_vent"] = ventilation_labels(wide[(sp, "co2")], th["co2_ventilate_ppm"],
