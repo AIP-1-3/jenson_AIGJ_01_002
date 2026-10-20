@@ -25,6 +25,12 @@ cp .env.example .env && chmod 600 .env          # 접속 정보는 .env 에만
 .venv/bin/python -m tsinfer.ingest.influx_export --start 2026-07-01
 ```
 
+과제 2 기준선 성능표 (시험 기간, `reports/02_baselines.md` 로 저장):
+
+```bash
+.venv/bin/python -m tsinfer.data.baselines
+```
+
 상시 가동은 [deploy/systemd/tsinfer-collector.service](deploy/systemd/tsinfer-collector.service) 주석대로 user 서비스로 등록한다.
 
 ## 구조
