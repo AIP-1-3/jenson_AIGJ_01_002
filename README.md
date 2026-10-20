@@ -8,6 +8,8 @@
 
 과제 원문: `AIP-1/timeseries-inference` (이슈 curriculum#6) · 최종 보고서: [docs/report.md](docs/report.md) · 진행 체크리스트: [docs/progress.md](docs/progress.md)
 
+**역할:** 개인 과제로 설계 판단·Jetson 실행·결과 해석은 민서가 했고, 코드 초안과 문서 정리에 AI 를 썼다(범위와 검증은 [보고서 7장](docs/report.md#7-ai-활용과-검증)). 제출 전 셀프 채점: [보고서 10장](docs/report.md#10-셀프-채점-추정-루브릭-a).
+
 ## 평가 항목별 근거 위치
 
 과제 안내의 평가 비중(동작 25 · 성능 25 · 해석 30 · 공정한 평가 10 · 재사용성 10) 순서로, 각 항목의 근거가 있는 곳이다.
