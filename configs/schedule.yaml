@@ -1,0 +1,22 @@
+# 과제 5 '사용 여부' 정답. 한국 시간 기준. 분류기의 입력으로는 절대 쓰지 않는다 (채점용).
+#
+# source 로 정답의 출처를 보고서에 적는다:
+#   timetable    : 실제 수업 시간표·회의실 예약표를 weekly/exceptions 에 옮긴 것
+#   placeholder  : 시간표를 받기 전 임시 가정 (평일 9~18시) — 해석에 한계를 꼭 적는다
+# 직접 관찰 기록이 있으면 observations_csv 가 시간표보다 우선한다.
+source: placeholder
+
+weekly:                # 요일: mon tue wed thu fri sat sun
+  실습실:
+    - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
+  사무실:
+    - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
+  회의실:
+    - {days: [mon, tue, wed, thu, fri], start: "09:00", end: "18:00"}
+
+# 휴일·특강 등 예외. occupied: false 면 그 구간을 비어 있음으로 덮어쓴다.
+exceptions: []
+#  - {space: 실습실, date: "2026-10-09", start: "00:00", end: "24:00", occupied: false}   # 한글날
+
+# 직접 관찰 기록 CSV (열: space,start,end,occupied — 시각은 "2026-10-21 13:05" 한국 시간)
+observations_csv: data/observations.csv

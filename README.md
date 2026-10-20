@@ -46,6 +46,12 @@ tmux new -s train
 .venv/bin/python -m tsinfer.models.anomaly    # → models/anomaly_ae.pt, reports/04_anomaly.md
 ```
 
+과제 5 상태 추정 (사용 여부 정답은 `configs/schedule.yaml` 의 시간표, 직접 관찰은 `data/observations.csv`):
+
+```bash
+.venv/bin/python -m tsinfer.models.state      # → models/state.joblib, reports/05_state.md
+```
+
 학습이 끝나면 `.env` 의 `SERVICE_MODEL=gru` 로 바꾸고 `systemctl --user restart tsinfer-service`.
 
 상시 추론 서비스 (과제 8, 형식은 [docs/interface.md](docs/interface.md)):
