@@ -44,6 +44,13 @@ def summarize(path: Path, hours: float, now: datetime | None = None) -> dict:
             for space, good in d.items():
                 gap_minutes[space] = gap_minutes.get(space, 0) + (0 if good else 1)
         out["data_gap_minutes"] = gap_minutes
+    if "monitor" in df and df["monitor"].notna().any():   # 자기 채점이 켜졌던 기록이 있을 때만
+        mon = [m for m in df["monitor"] if isinstance(m, dict)]
+        out["monitor"] = {
+            "latest": {sp: {k: v.get(k) for k in ("n", "mae", "mae_persistence", "ratio")}
+                       for sp, v in mon[-1].get("spaces", {}).items()},
+            "alerts_sent": int(sum(m.get("sent", 0) for m in mon)),
+        }
     return out
 
 
