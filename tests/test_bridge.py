@@ -76,3 +76,46 @@ def test_dashboards_reference_bridge_measurements():
     produced = set(to_points(_payload())[0].fields)
     optional = {"co2_ventilate_in_minutes", "occupied"}   # 값이 null 이면 안 쓰는 필드
     assert used <= produced | optional, used - produced - optional
+
+
+def test_mirror_copies_new_collector_rows_in_iot_bucket_shape(tmp_path, monkeypatch):
+    """학교 InfluxDB 에 못 닿을 때: 수집기 SQLite → 로컬 InfluxDB 를 iot-bucket 과 같은 모양으로."""
+    from tsinfer.bridge import mirror as m
+    from tsinfer.collector.mapping import Reading
+    from tsinfer.collector.store import Store
+
+    db = tmp_path / "t.db"
+    store = Store(db)
+    t0 = datetime.now(timezone.utc) - timedelta(minutes=5)
+    store.write([Reading(space="사무실 밖", device="EM300", metric="temperature", value=21.5,
+                         sensor_ts=t0, received_ts=t0, source="chirpstack_env")])
+
+    class Sink:
+        lines: list[str] = []
+
+        def write(self, lines):
+            self.lines.extend(lines)
+
+    sink = Sink()
+    mir = m.SensorMirror(db, sink, backfill_hours=1)
+    assert mir.step() == 1
+    assert sink.lines[0] == f"temperature,device_id=EM300,location=사무실\\ 밖 value=21.5 {int(t0.timestamp())}"
+    assert mir.step() == 0                         # 이미 옮긴 행은 다시 안 옮김
+    t1 = t0 + timedelta(minutes=1)
+    store.write([Reading(space="실습실", device="AM107", metric="co2", value=800,
+                         sensor_ts=t1, received_ts=t1, source="chirpstack_env")])
+    assert mir.step() == 1 and sink.lines[-1].startswith("co2,device_id=AM107,location=실습실 value=800.0 ")
+
+
+def test_mirror_refuses_to_write_back_to_source_server(monkeypatch):
+    from tsinfer.bridge.__main__ import mirror_enabled
+
+    monkeypatch.setenv("BRIDGE_MIRROR_SENSORS", "1")
+    monkeypatch.setenv("INFLUX_URL", "http://school:8086")
+    monkeypatch.setenv("INFLUX_RESULT_URL", "http://school:8086/")
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        mirror_enabled()
+    monkeypatch.setenv("INFLUX_RESULT_URL", "http://localhost:8186")
+    assert mirror_enabled()
