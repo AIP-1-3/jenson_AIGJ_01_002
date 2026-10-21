@@ -12,6 +12,13 @@
 임계값: 탐지기마다 검증 기간(고장 없음) 경보 사건이 하루 0.5 / 0.25 / 0.1 회 이하가 되는 가장 낮은 값.
 결합 선택: 검증 기간에 따로 넣은 고장(seed 1)으로 '규칙 OR 오토인코더 + 새 탐지기 조합'을 모두 채점해
 검증 헛경보 ≤1회/일 안에서 탐지율이 가장 높은 조합을 고른다. 시험 기간은 고르는 데 쓰지 않는다.
+
+과제 안내 고장 5종 시험: 과제 안내의 고장은 튄 값·값 고정·영점 틀어짐·냉방 정지·환기 정지다.
+anomaly.py 는 냉방 정지·환기 정지 대신 noise·dropout 을 넣으므로, 시험 기간에 따로 다음을 만들어 채점한다.
+  spike/stuck/drift : 과제 4 시험 주입(seed 0)의 같은 고장을 그대로 (noise·dropout 자리는 원본으로 되돌림)
+  cooling_off : 평일 9~18시(한국 시각, 공휴일 제외) 사용 시간 안, 2~3시간에 걸쳐 온도 +3~5℃ 선형 (끝에서 원래로)
+  vent_off    : 평일 사용 시간 중 CO₂ 가 오르는 구간, 시작 시점 대비 상승분을 1.8배로 (2~3시간)
+냉방·환기 고장은 실내 공간에만 넣는다 (외기 공간 제외). 임계값·조합은 검증 기간에서 정한 것을 그대로 쓴다.
 """
 from __future__ import annotations
 
@@ -46,6 +53,19 @@ LABELS = {"rules": "규칙", "ae": "오토인코더", "pe": "예측오차", "cus
 APPLIES = {"pe": TARGETS, "cusum": TARGETS, "floor": ("co2",), "cross": PAIR_METRICS, "stuck2": PAIR_METRICS}
 
 Scores = dict[str, pd.DataFrame]     # 공간 → (시점 × 항목) 이상 점수, 해당 없는 항목은 NaN
+
+# 과제 안내 고장 5종 시험
+T4_KINDS = ("spike", "stuck", "drift", "cooling_off", "vent_off")
+T4_LABELS = {"spike": "튄 값", "stuck": "값 고정", "drift": "영점 틀어짐",
+             "cooling_off": "냉방 정지", "vent_off": "환기 정지"}
+USE_HOURS = (9, 18)      # 사용 시간 (한국 시각, 평일) — configs/schedule.yaml 의 평일 9~18시와 같음
+USAGE_HOURS = (2, 3)     # 냉방·환기 정지 지속 (시간, 양 끝 포함, 5분 단위 무작위)
+COOL_AMP = (3.0, 5.0)    # 냉방 정지: 끝 시점 온도 상승 (℃)
+VENT_GAIN = 1.8          # 환기 정지: 시작 시점 대비 CO₂ 상승분 배율
+VENT_MIN_RISE = 100.0    # 환기 정지 자리: 원본 CO₂ 가 구간 끝에서 시작보다 이만큼(ppm) 이상 올라 있어야 '오르는 구간'
+T4_SEP = pd.Timedelta(hours=2)   # 새 고장과 다른 고장 사이 간격. 사용 시간이 하루 9시간뿐이라 과제 4 의 6시간보다 짧게
+DETECTOR_LABELS = {"spike": "규칙-급변", "stuck": "규칙-값 고정", "range": "규칙-범위 밖", "noise": "규칙-잡음",
+                   "gap": "규칙-끊김", "ae": "오토인코더", **LABELS}
 
 
 # ---------------------------------------------------------------- 공통
@@ -379,6 +399,137 @@ def select_combo(base: dict, cand: dict[tuple[str, float], dict], faults: list[F
     return best, df.sort_values(["detection_rate", "fa"], ascending=[False, True])
 
 
+# ---------------------------------------------------------------- 과제 안내 고장 5종 (냉방 정지·환기 정지 주입)
+
+def usage_mask(index: pd.DatetimeIndex, tz: str, holidays: list[str]) -> np.ndarray:
+    """평일(공휴일 제외) 한국 시각 9~18시 사용 시간."""
+    hr = local_hours(index, tz)
+    return workdays(index, tz, holidays) & (hr >= USE_HOURS[0]) & (hr < USE_HOURS[1])
+
+
+def inject_usage(wide: pd.DataFrame, spaces: list[str], per_kind: int = 15, seed: int = 0, tz: str = "Asia/Seoul",
+                 holidays: list[str] | None = None, busy: list[Fault] | None = None,
+                 step_min: int = 5) -> tuple[pd.DataFrame, list[Fault]]:
+    """사용 시간 고장 2종(cooling_off, vent_off)을 넣은 복사본과 정답 목록.
+    고장 구간 전체가 한 사용 시간(평일 9~18시) 안에 들어가는 자리만 고른다. busy(이미 넣은 고장)와 T4_SEP 만큼 띄운다.
+      cooling_off: 온도 += 0→amp 선형 (amp 3~5℃), 끝 다음 칸부터 원래 값
+      vent_off   : CO₂ = 원본 + (1.8-1)×max(원본 - 시작값, 0) — 오른 만큼만 키우고 내려간 칸은 그대로"""
+    rng = np.random.default_rng(seed)
+    w = wide.copy()
+    step = pd.Timedelta(minutes=step_min)
+    use = usage_mask(w.index, tz, list(holidays or []))
+    taken: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] = {sp: [] for sp in spaces}
+    for f in busy or []:
+        if f.space in taken:
+            taken[f.space].append((f.start, f.end))
+    faults: list[Fault] = []
+    lo_n, hi_n = USAGE_HOURS[0] * 60 // step_min, USAGE_HOURS[1] * 60 // step_min
+    for kind, metric in (("cooling_off", "temperature"), ("vent_off", "co2")):
+        cand = [sp for sp in spaces if (sp, metric) in w]
+        placed, tries = 0, 0
+        while cand and placed < per_kind and tries < per_kind * 400:
+            tries += 1
+            sp = cand[rng.integers(len(cand))]
+            n = int(rng.integers(lo_n, hi_n + 1))
+            if len(w) <= n:
+                break
+            i0 = int(rng.integers(0, len(w) - n))
+            if not use[i0:i0 + n].all():
+                continue                          # 사용 시간 밖으로 걸치면 버림 (밤·주말·공휴일 포함)
+            t0, t1 = w.index[i0], w.index[i0] + n * step
+            if w.index[i0 + n - 1] != t1 - step:
+                continue                          # 인덱스가 빠진 구간
+            if any(t0 < e + T4_SEP and t1 > s - T4_SEP for s, e in taken[sp]):
+                continue
+            seg = w[(sp, metric)].iloc[i0:i0 + n]
+            if seg.isna().mean() > 0.1 or seg.std() == 0:
+                continue
+            idx = w.index[i0:i0 + n]
+            if kind == "cooling_off":
+                amp = float(rng.uniform(*COOL_AMP))
+                w.loc[idx, (sp, metric)] += np.linspace(0, amp, n)
+            else:
+                c0 = seg.iloc[0]
+                if not np.isfinite(c0) or not seg.iloc[-1] - c0 >= VENT_MIN_RISE:
+                    continue                      # CO₂ 가 오르는 구간이 아님
+                w.loc[idx, (sp, metric)] = seg + (VENT_GAIN - 1) * (seg - c0).clip(lower=0)
+            taken[sp].append((t0, t1))
+            faults.append(Fault(kind, sp, metric, t0, t1))
+            placed += 1
+    return w, faults
+
+
+def inject_task_kinds(clean: pd.DataFrame, injected: pd.DataFrame, faults: list[Fault], spaces: list[str],
+                      per_kind: int, seed: int, tz: str, holidays: list[str],
+                      outdoor: str | None = None) -> tuple[pd.DataFrame, list[Fault]]:
+    """과제 4 시험 주입에서 spike/stuck/drift 는 그대로 두고 noise/dropout 은 원본으로 되돌린 뒤,
+    실내 공간(outdoor 제외)에 cooling_off/vent_off 를 더한다. 과제 4 고장 사이는 6시간 이상이라 되돌리기가 정확하다."""
+    w = injected.copy()
+    keep = [f for f in faults if f.kind in T4_KINDS]
+    for f in faults:
+        if f.kind in T4_KINDS:
+            continue
+        cols = [(f.space, m) for m in METRICS if (f.space, m) in w] if f.metric == "*" else [(f.space, f.metric)]
+        sel = (w.index >= f.start) & (w.index < f.end)
+        w.loc[sel, cols] = clean.loc[sel, cols]
+    indoor = [sp for sp in spaces if sp != outdoor]
+    w, new = inject_usage(w, indoor, per_kind=per_kind, seed=seed, tz=tz, holidays=holidays, busy=keep)
+    return w, keep + new
+
+
+def fault_firsts(flags: dict[str, pd.DataFrame], faults: list[Fault]) -> pd.DataFrame:
+    """고장마다 첫 경보: 탐지 여부(시작~끝+30분), 지연(분), 진행 중 탐지, 첫 경보 칸에 켜진 탐지기 (여럿이면 모두).
+    진행 중 = 고장 구간(시작 ≤ t < 끝) 안의 경보. 단 급변 규칙은 다음 칸과의 차이도 보므로(diff(-1)) 끝에서 원래 값으로
+    돌아가는 계단이 마지막 칸에 켜진다 — 마지막 칸의 급변 경보만은 빼서 그 계단만 잡은 경우를 진행 중으로 세지 않는다.
+    한 칸짜리(튄 값)는 마지막 칸이 곧 시작이라 그대로 둔다."""
+    rows = []
+    for f in faults:
+        fl = flags[f.space]
+        win = fl[(fl.index >= f.start) & (fl.index <= f.end + GRACE)]
+        hit = win.any(axis=1)
+        first = hit.idxmax() if hit.any() else None
+        by = []
+        if first is not None:
+            on = [c for c in win.columns if win.at[first, c]]
+            by = sorted({DETECTOR_LABELS.get(c.split(":")[0], c.split(":")[0]) for c in on})
+        during = win[win.index < f.end]
+        if len(during) > 1:
+            during = during.copy()
+            during.loc[during.index[-1], [c for c in during.columns if c.startswith("spike:")]] = False
+        rows.append({"kind": f.kind, "detected": first is not None,
+                     "delay_min": (first - f.start).total_seconds() / 60 if first is not None else np.nan,
+                     "in_progress": bool(during.any(axis=None)), "by": by})
+    return pd.DataFrame(rows, columns=["kind", "detected", "delay_min", "in_progress", "by"])
+
+
+def kind_table(firsts: pd.DataFrame, fa_per_day: float, kinds=T4_KINDS) -> pd.DataFrame:
+    """종류별 건수·탐지율·진행 중 탐지율·지연 중앙값, 헛경보/일 (전체 공간 합, 종류와 무관한 한 값)."""
+    rows = {}
+    for k in (*kinds, "전체"):
+        d = firsts if k == "전체" else firsts[firsts["kind"] == k]
+        name = "전체" if k == "전체" else f"{k} ({T4_LABELS.get(k, k)})"
+        rows[name] = {"건수": len(d),
+                      "탐지율(%)": round(d["detected"].mean() * 100, 1) if len(d) else np.nan,
+                      "진행 중 탐지(%)": round(d["in_progress"].mean() * 100, 1) if len(d) else np.nan,
+                      "지연 중앙값(분)": d["delay_min"].median() if len(d) else np.nan,
+                      "헛경보/일": round(fa_per_day, 2)}
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def caught_by_lines(firsts: pd.DataFrame, kinds=T4_KINDS) -> list[str]:
+    """종류마다 한 줄: 첫 경보를 낸 탐지기별 건수와 놓친 건수."""
+    out = []
+    for k in kinds:
+        d = firsts[firsts["kind"] == k]
+        cnt = pd.Series([b for bs in d["by"] for b in bs], dtype=object).value_counts()
+        parts = [f"{name} {n}" for name, n in cnt.items()]
+        miss = int((~d["detected"]).astype(bool).sum()) if len(d) else 0
+        late = int((d["detected"].astype(bool) & ~d["in_progress"].astype(bool)).sum()) if len(d) else 0
+        out.append(f"- {k} ({T4_LABELS[k]}, {len(d)}건): " + (", ".join(parts) if parts else "첫 경보 없음")
+                   + f" / 끝난 뒤에만 경보 {late} / 놓침 {miss}")
+    return out
+
+
 # ---------------------------------------------------------------- 실행
 
 def load_ae(path=an.MODEL_PATH) -> an.AE | None:
@@ -482,7 +633,20 @@ def run(cfg: dict[str, Any], wide: pd.DataFrame, per_kind: int = 15, epochs: int
     # 검증 기간 (조합 고를 때 본 값) — 같은 방법별
     valid_res = {m: an.evaluate(merged("valid_inj", parts, combo), vfaults, vdays) for m, (parts, combo) in methods.items()}
 
-    return {"spaces": spaces, "ae": ae, "ae_src": ae_src, "gru": gru, "dm": dm, "names": names, "thr": thr, "thr_fa": thr_fa,
+    # 과제 안내 고장 5종 시험 — 위에서 정한 임계값·조합 그대로, 새 프레임에 다시 적용만 한다
+    outdoor = cfg.get("model", {}).get("outdoor_space")
+    t4_inj, t4_faults = inject_task_kinds(test, test_inj, faults, spaces, per_kind, seed, dm.tz, dm.holidays, outdoor)
+    t4_base = an.method_flags("combined", t4_inj, spaces, ae, **kw)     # 규칙 열 + 오토인코더 열
+    t4_new = {k: score_flags(dets[k[0]](t4_inj), thr[k], k[0]) for k in best}
+    t4_flags = {"base": t4_base,
+                "final": {sp: pd.concat([t4_base[sp]] + [t4_new[k][sp] for k in best], axis=1) for sp in spaces}}
+    t4 = {}
+    for m, fl in t4_flags.items():
+        firsts = fault_firsts(fl, t4_faults)
+        t4[m] = {"firsts": firsts, "table": kind_table(firsts, false_alarms(any_flags(fl), test.index, t4_faults, tdays))}
+    log("과제 안내 5종 시험: " + ", ".join(f"{k} {sum(f.kind == k for f in t4_faults)}건" for k in T4_KINDS))
+
+    return {"t4": t4, "t4_faults": t4_faults, "seed": seed,"spaces": spaces, "ae": ae, "ae_src": ae_src, "gru": gru, "dm": dm, "names": names, "thr": thr, "thr_fa": thr_fa,
             "best": best, "combos": combos, "methods": methods, "results": results, "clean_fa": clean_fa,
             "valid_res": valid_res, "faults": faults, "vfaults": vfaults, "test_flags": test_flags,
             "clean_flags": clean_flags, "period": (test.index[0], test.index[-1]),
@@ -639,6 +803,7 @@ def build_report(out: dict[str, Any], cfg: dict[str, Any], per_kind: int) -> lis
         "",
         clean_ev.to_markdown(index=False) if len(clean_ev) else "",
         "",
+        *task_kinds_section(out, cfg, per_kind),
         "## 설계상 한계",
         "- 주입 drift 는 끝에서 원래 값으로 한 번에 돌아간다. 이 계단을 급변 규칙·오토인코더가 잡으면 지연 ≈360분으로 '탐지'에 "
         "들어가므로, 비교표의 'drift 진행 중 탐지' 행(경보가 어긋나는 동안 켜진 비율)을 함께 본다.",
@@ -649,13 +814,51 @@ def build_report(out: dict[str, Any], cfg: dict[str, Any], per_kind: int) -> lis
         "- 예측오차·CUSUM 은 GRU 가 예측하는 CO₂·온도만 본다. 입력 창이 고장 값을 보기 시작하면 예측도 따라가므로 "
         "느린 drift 는 한 칸 오차가 작다 — 그래서 누적(CUSUM)을 함께 본다.",
         "- 공간 간 비교는 공간이 3개 이상이어야 어느 센서가 어긋났는지 가릴 수 있다 (2개면 서로 같은 크기로 보임).",
+        "- 냉방 정지·환기 정지는 센서 고장이 아니라 설비 고장을 흉내 낸 합성 주입이다. 냉방 정지는 끝에서 원래 온도로 한 번에 "
+        "돌아가고 환기 정지도 끝에서 키운 상승분이 사라지므로, 그 계단을 급변 규칙이 잡으면 '진행 중 탐지'가 아닌 탐지로 "
+        "세어진다. 실제 냉방·환기 정지 사례(설비 기록)로 확인하지 않았다.",
         "",
         "## 해석 (직접 작성)",
         "- 예측오차 탐지기 vs 오토인코더 (어떤 고장을 누가 더 잘 잡나, 이유):",
         "- drift 를 잡은 사례 / 놓친 사례의 공통점 (낮·새벽, 항목):",
+        "- 과제 안내 5종: 냉방 정지·환기 정지를 누가 잡았나, 놓친 이유 (검증 조합 선택에 없던 종류):",
         "- 최종 결합을 운영에 쓸 때 헛경보와 탐지율의 균형:",
         "",
     ]
+    return lines
+
+
+def task_kinds_section(out: dict[str, Any], cfg: dict[str, Any], per_kind: int) -> list[str]:
+    """과제 안내 고장 5종 시험 절. 기존 결합 / 최종 결합 각각 종류별 표와 '누가 잡았나' 줄."""
+    if "t4" not in out:
+        return []
+    t4f = out["t4_faults"]
+    counts = ", ".join(f"{k} {sum(f.kind == k for f in t4f)}" for k in T4_KINDS)
+    lines = [
+        "## 과제 안내 고장 5종 시험 (시험 기간)",
+        "",
+        "과제 안내의 고장 5종(튄 값·값 고정·영점 틀어짐·냉방 정지·환기 정지)으로 다시 채점한다. "
+        "임계값·결합 조합은 위에서 검증 기간으로 정한 것을 그대로 쓰고 시험 기간으로 다시 고르지 않는다 "
+        "(냉방 정지·환기 정지는 조합을 고를 때 없던 종류다).",
+        "",
+        "- spike·stuck·drift: 과제 4 시험 주입(seed 0)의 같은 고장 그대로, noise·dropout 자리는 원본으로 되돌림",
+        f"- cooling_off(냉방 정지): 평일 {USE_HOURS[0]}~{USE_HOURS[1]}시(한국 시각, 공휴일 제외) 안에서 "
+        f"{USAGE_HOURS[0]}~{USAGE_HOURS[1]}시간 동안 온도 +{COOL_AMP[0]:g}~{COOL_AMP[1]:g}℃ 선형, 끝에서 원래 값",
+        f"- vent_off(환기 정지): 같은 사용 시간 중 원본 CO₂ 가 구간 끝에서 시작보다 {VENT_MIN_RISE:g}ppm 이상 오른 "
+        f"{USAGE_HOURS[0]}~{USAGE_HOURS[1]}시간, 시작 시점 대비 상승분 ×{VENT_GAIN:g}",
+        f"- 냉방·환기 정지 대상: 실내 공간만 ({cfg.get('model', {}).get('outdoor_space') or '외기 공간'} 제외), "
+        f"seed {out.get('seed', 0)}, 종류별 {per_kind}건 시도, 다른 고장과 {int(T4_SEP.total_seconds() // 3600)}시간 이상 간격 — 실제 {counts}건",
+        "- 진행 중 탐지 = 고장 구간(시작~끝) 안에 경보가 켜진 비율. 급변 규칙은 다음 칸 차이도 봐서 끝에서 원래 값으로 "
+        "돌아가는 계단이 마지막 칸에 켜지므로 마지막 칸의 급변 경보는 뺀다 (한 칸짜리 튄 값은 그대로), "
+        "헛경보/일 = 이 주입 시험에서 고장과 겹치지 않는 경보 사건 (전체 공간 합)",
+        "",
+    ]
+    for m in ("base", "final"):
+        title = METHOD_TITLES[m] + (f": 규칙 + 오토인코더 + {combo_name(out['best'])}" if m == "final" else "")
+        res = out["t4"][m]
+        lines += [f"### {title}", "", res["table"].to_markdown(), "",
+                  "누가 잡았나 (원인별 첫 경보 건수, 같은 칸에 여럿이 켜지면 각각 셈):", "",
+                  *caught_by_lines(res["firsts"]), ""]
     return lines
 
 
