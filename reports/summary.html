@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- tsinfer.viz.results 가 채우는 본문. 문서 뼈대(<html><head>)는 render() 가 붙인다 (게시용 --fragment 는 그대로). -->
+<title>교육장 공기질 과제 결과</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 레이아웃: 위에 판정표(요약), 아래로 과제 순서대로 그림 + 그림 속 숫자를 글로 적은 설명. 넓은 화면 2열, 폰 1열. */
+:root {
+  --bg: #f5f7f6;          /* 옅은 청록 기운의 회색 — 교육장 벽면 센서 패널 느낌 */
+  --surface: #ffffff;
+  --fg: #17211f;
+  --muted: #5b6a67;
+  --line: #d9e1df;
+  --accent: #0f766e;       /* 환기·공기 */
+  --accent-2: #b45309;     /* 비교 대상(현재값 유지) */
+  --accent-3: #6d28d9;     /* 세 번째 계열 */
+  --pass: #15803d; --pass-bg: #dcfce7;
+  --fail: #b91c1c; --fail-bg: #fee2e2;
+  --part: #a16207; --part-bg: #fef3c7;
+  --info: #334155; --info-bg: #e2e8f0;
+  --font-display: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1514; --surface: #161e1c; --fg: #e3ebe9; --muted: #93a39f; --line: #2a3633;
+    --accent: #2dd4bf; --accent-2: #f59e0b; --accent-3: #a78bfa;
+    --pass: #4ade80; --pass-bg: #12301f; --fail: #f87171; --fail-bg: #3a1616;
+    --part: #facc15; --part-bg: #352c0c; --info: #cbd5e1; --info-bg: #263140;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1514; --surface: #161e1c; --fg: #e3ebe9; --muted: #93a39f; --line: #2a3633;
+  --accent: #2dd4bf; --accent-2: #f59e0b; --accent-3: #a78bfa;
+  --pass: #4ade80; --pass-bg: #12301f; --fail: #f87171; --fail-bg: #3a1616;
+  --part: #facc15; --part-bg: #352c0c; --info: #cbd5e1; --info-bg: #263140;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--font-data); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--font-display); font-size: clamp(24px, 4vw, 34px); line-height: 1.25; margin: 0; text-wrap: balance; font-weight: 700; }
+h2 { font-size: 19px; margin: 0; text-wrap: balance; font-weight: 600; }
+h3 { font-size: 15px; margin: 0; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); }
+.scale { display: flex; gap: 0; height: 10px; border-radius: 5px; overflow: hidden; max-width: 420px; }
+.scale span { flex: 1; }
+.scale-labels { display: flex; justify-content: space-between; max-width: 420px; font-family: var(--font-data); font-size: 11px; color: var(--muted); }
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { white-space: nowrap; font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
+tr:last-child td { border-bottom: 0; }
+td.num, .mono, code { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+code { font-size: 12px; color: var(--muted); }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.pill.pass { color: var(--pass); background: var(--pass-bg); }
+.pill.fail { color: var(--fail); background: var(--fail-bg); }
+.pill.partial { color: var(--part); background: var(--part-bg); }
+.pill.info { color: var(--info); background: var(--info-bg); }
+section { display: grid; gap: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 20px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.chart { position: relative; height: 260px; min-width: 0; }
+.chart.small { height: 210px; }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: none; }
+figcaption b { color: var(--fg); font-weight: 600; }
+ul.cond { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; display: grid; gap: 2px; }
+footer { color: var(--muted); font-size: 12.5px; font-family: var(--font-data); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">AIP 3.2 시계열 추론 · Jetson Orin Nano Super</div>
+    <h1>교육장 공기질 과제 결과</h1>
+    <p class="lede">교육장 4개 공간의 CO₂·온도·습도로 60분 뒤를 예측하고, 센서 고장과 환기 필요를 알리는 과제 2~8 의 결과를 한 장에 모았다. 모든 숫자는 <code>reports/*.md</code> 표에서 그대로 읽었고, 측정은 Jetson 실측이다.</p>
+    <div class="scale" aria-hidden="true"><span style="background: var(--pass)"></span><span style="background: var(--part)"></span><span style="background: var(--fail)"></span></div>
+    <div class="scale-labels" aria-hidden="true"><span>400 ppm</span><span>1,000 환기</span><span>1,500 위험</span></div>
+  </header>
+
+  <section aria-labelledby="h-verdict">
+    <h2 id="h-verdict">과제별 판정</h2>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>과제</th><th>내용</th><th>확인 기준</th><th>결과</th><th>판정</th><th>근거</th></tr></thead>
+        <tbody>
+<tr><td class="num">2</td><td>기준선</td><td>기준선 3종 × 5·15·30·60분 MAE</td><td>현재값 유지가 세 공간 모두 최선</td><td><span class="pill info">비교</span></td><td><code>reports/02_baselines.md</code></td></tr>
+<tr><td class="num">3</td><td>60분 예측 (GRU)</td><td>60분 CO₂ 현재값 유지 대비 −30%</td><td>실습실 −20.4%, 사무실 −13.6%, 회의실 −7.5%</td><td><span class="pill fail">미달</span></td><td><code>reports/03_forecast.md</code></td></tr>
+<tr><td class="num">4</td><td>이상 탐지</td><td>탐지율 ≥80%, 헛경보 ≤1회/일</td><td>결합 탐지율 73.3%, 헛경보 1.2회/일</td><td><span class="pill fail">미달</span></td><td><code>reports/04_anomaly.md</code></td></tr>
+<tr><td class="num">5</td><td>상태 추정</td><td>환기 경보 재현율 ≥0.85, 규칙보다 macro-F1↑</td><td>logreg 재현율 0.894, macro-F1 0.59 (규칙 0.777)</td><td><span class="pill partial">일부 통과</span></td><td><code>reports/05_state.md</code></td></tr>
+<tr><td class="num">6</td><td>사전학습 (Chronos-Bolt)</td><td>정확도·구간 적중률·지연·메모리 비교</td><td>실습실 60분 32.2 vs GRU 32.2 ppm, 지연 131.5ms, 메모리 +326MB</td><td><span class="pill info">비교</span></td><td><code>reports/06_pretrained.md</code></td></tr>
+<tr><td class="num">7</td><td>엣지 최적화</td><td>변환 후 CO₂ 차이 ≤1ppm, 판정 변화 ≤0.1%</td><td>TensorRT FP16 0.32ppm, 판정 변화 0.0%</td><td><span class="pill pass">통과</span></td><td><code>reports/07_edge.md</code></td></tr>
+<tr><td class="num">8</td><td>상시 서비스</td><td>12시간 무중단, 수집 10분 중단 시 끊김 경보</td><td>logs/service_cycles.jsonl 없음 (Jetson 에서 다시 만들면 채워진다)</td><td><span class="pill info">비교</span></td><td><code>docs/interface.md</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-t3">
+    <h2 id="h-t3">과제 3 · 60분 CO₂ 예측 (GRU)</h2>
+    <div class="grid">
+      <figure>
+        <h3>학습 곡선 (L1 손실, 변화량 목표)</h3>
+        <div class="chart"><canvas id="c-curve" role="img" aria-label="GRU 학습 곡선"></canvas></div>
+        <figcaption>에폭 16회 학습. 학습 손실은 0.2892 → 0.2125, 검증 손실은 에폭 10 에서 가장 낮은 0.1724 이었다. 그 뒤로는 나아지지 않아 학습을 멈췄고 이 에폭의 가중치를 썼다. 평균 에폭 시간 50.2초 (Jetson CPU 3스레드).</figcaption>
+      </figure>
+      <figure>
+        <h3>60분 CO₂ MAE: 현재값 유지 vs GRU (빨간 가로선 = −30% 목표)</h3>
+        <div class="chart"><canvas id="c-goal" role="img" aria-label="공간별 60분 CO2 오차"></canvas></div>
+        <figcaption>60분 CO₂ MAE (같은 시험 시점): 실습실 현재값 유지 40.0 → GRU 31.8 ppm (−20.4%), 사무실 현재값 유지 46.4 → GRU 40.1 ppm (−13.6%), 회의실 현재값 유지 56.6 → GRU 52.3 ppm (−7.5%). 목표 −30% 를 넘은 공간 0/3곳.</figcaption>
+      </figure>
+    </div>
+    <div class="grid3" id="horizon-grid"></div>
+    <p class="lede" style="font-size:13.5px">지평이 길수록 GRU 와 현재값 유지의 차이가 벌어진다. 실습실 5분 12.0 vs 12.0, 60분 31.8 vs 40.0 ppm; 사무실 5분 9.3 vs 9.6, 60분 40.1 vs 46.4 ppm; 회의실 5분 10.5 vs 10.4, 60분 52.3 vs 56.6 ppm.</p>
+    <ul class="cond"><li>데이터: 실데이터 InfluxDB iot-bucket + 수집기, 학습 ~2026-09-21, 검증 ~2026-10-06, 시험 2026-10-06 ~ 2026-10-20 (UTC)</li>
+<li>대상 공간: 실습실, 사무실, 회의실 (외기 입력: 사무실 밖)</li>
+<li>입력 120분(24칸) × 15특성, 출력 5~60분 12칸 한 번에, 목표 = 현재값 대비 변화량</li>
+<li>GRU hidden 64, layers 1, dropout 0.1, Adam lr 0.001, batch 256, 에폭 16/40(조기 종료 patience 6, 검증은 일하는 날만), L1 손실, seed 42</li>
+<li>공휴일 8일은 평일에서 제외, 일정 입력: 있음</li>
+<li>장비: Jetson Orin Nano Super, PyTorch CPU 3스레드, 평균 에폭 50.2s, 시험 추론 0.052ms/창(배치 4096)</li></ul>
+  </section>
+
+  <section aria-labelledby="h-t2">
+    <h2 id="h-t2">과제 2 · 기준선 · 과제 6 · 사전학습 모델</h2>
+    <div class="grid">
+      <figure>
+        <h3>기준선 3종, 60분 CO₂ MAE</h3>
+        <div class="chart"><canvas id="c-baseline" role="img" aria-label="기준선 비교"></canvas></div>
+        <figcaption>과제 2 기준선 60분 CO₂ MAE: 실습실 현재값 유지 40.0, 1시간 평균 51.2, 어제 같은 시각 100.3 ppm; 사무실 현재값 유지 46.4, 1시간 평균 62.0, 어제 같은 시각 142.2 ppm; 회의실 현재값 유지 65.1, 1시간 평균 83.6, 어제 같은 시각 189.7 ppm. 시험 시점 전체 기준이라 과제 3 의 같은 시점 비교 값과 다를 수 있다.</figcaption>
+      </figure>
+      <figure>
+        <h3>Chronos-Bolt zero-shot vs GRU vs 현재값 유지 (60분 CO₂)</h3>
+        <div class="chart"><canvas id="c-chronos" role="img" aria-label="사전학습 모델 비교"></canvas></div>
+        <figcaption>과제 6 평가 시점 300개의 60분 CO₂ MAE: 실습실 현재값 유지 40.1, GRU 32.2, Chronos 32.2 ppm; 사무실 현재값 유지 48.7, GRU 40.6, Chronos 42.4 ppm; 회의실 현재값 유지 51.3, GRU 47.1, Chronos 46.8 ppm. Chronos 지연 131.5ms(배치 1), 모델 메모리 +326MB, 10~90% 구간 적중률 77.3~81.4%.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-t4">
+    <h2 id="h-t4">과제 4 · 이상 탐지 · 과제 5 · 상태 추정</h2>
+    <div class="grid">
+      <figure>
+        <h3>고장 종류별 탐지율 (빨간 가로선 = 80% 목표)</h3>
+        <div class="chart"><canvas id="c-anomaly" role="img" aria-label="고장 종류별 탐지율"></canvas></div>
+        <figcaption>고장 종류별 15건씩 넣었을 때 탐지율(%): spike 규칙 100.0 · 오토인코더 100.0 · 결합 100.0; stuck 규칙 100.0 · 오토인코더 0.0 · 결합 100.0; drift 규칙 20.0 · 오토인코더 13.3 · 결합 26.7; noise 규칙 33.3 · 오토인코더 33.3 · 결합 40.0; dropout 규칙 100.0 · 오토인코더 0.0 · 결합 100.0. 헛경보(회/일): 규칙 1.1, 오토인코더 0.2, 결합 1.2. 결합 탐지율이 80% 미만인 종류: drift, noise.</figcaption>
+      </figure>
+      <figure>
+        <h3>환기 경보 (30분 전) 분류 성능</h3>
+        <div class="chart"><canvas id="c-state" role="img" aria-label="환기 경보 분류 성능"></canvas></div>
+        <figcaption>환기 경보(30분 전) 재현율·정밀도·macro-F1: rule 0.575 / 0.548 / 0.777; logreg 0.894 / 0.13 / 0.59; hgb 0.869 / 0.19 / 0.641. 확인 기준은 재현율 0.85 이상이면서 macro-F1 이 규칙보다 높은 것.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-t7">
+    <h2 id="h-t7">과제 7 · 엣지 최적화</h2>
+    <figure>
+      <h3>추론 지연 (ms, 배치 1, 로그 눈금)</h3>
+      <div class="chart small"><canvas id="c-edge" role="img" aria-label="백엔드별 추론 지연"></canvas></div>
+      <figcaption>배치 1 평균 지연(ms, 로그 눈금): anomaly_ae onnxruntime_cpu 0.026, pytorch_cpu 0.894, tensorrt_fp16 0.007; forecast_gru onnxruntime_cpu 0.119, pytorch_cpu 10.977, tensorrt_fp16 0.01. 측정 중 전력 평균 7412mW, 최대 8748mW, RAM 최대 5379MB (tegrastats).</figcaption>
+    </figure>
+  </section>
+
+  <footer>생성 2026-10-21T00:53:35+00:00 · python -m tsinfer.viz.results · 숫자 출처 reports/*.md</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script id="data" type="application/json">{"generated_at": "2026-10-21T00:53:35+00:00", "verdicts": [{"task": "2", "title": "기준선", "target": "기준선 3종 × 5·15·30·60분 MAE", "result": "현재값 유지가 세 공간 모두 최선", "status": "info", "link": "reports/02_baselines.md"}, {"task": "3", "title": "60분 예측 (GRU)", "target": "60분 CO₂ 현재값 유지 대비 −30%", "result": "실습실 −20.4%, 사무실 −13.6%, 회의실 −7.5%", "status": "fail", "link": "reports/03_forecast.md"}, {"task": "4", "title": "이상 탐지", "target": "탐지율 ≥80%, 헛경보 ≤1회/일", "result": "결합 탐지율 73.3%, 헛경보 1.2회/일", "status": "fail", "link": "reports/04_anomaly.md"}, {"task": "5", "title": "상태 추정", "target": "환기 경보 재현율 ≥0.85, 규칙보다 macro-F1↑", "result": "logreg 재현율 0.894, macro-F1 0.59 (규칙 0.777)", "status": "partial", "link": "reports/05_state.md"}, {"task": "6", "title": "사전학습 (Chronos-Bolt)", "target": "정확도·구간 적중률·지연·메모리 비교", "result": "실습실 60분 32.2 vs GRU 32.2 ppm, 지연 131.5ms, 메모리 +326MB", "status": "info", "link": "reports/06_pretrained.md"}, {"task": "7", "title": "엣지 최적화", "target": "변환 후 CO₂ 차이 ≤1ppm, 판정 변화 ≤0.1%", "result": "TensorRT FP16 0.32ppm, 판정 변화 0.0%", "status": "pass", "link": "reports/07_edge.md"}, {"task": "8", "title": "상시 서비스", "target": "12시간 무중단, 수집 10분 중단 시 끊김 경보", "result": "logs/service_cycles.jsonl 없음 (Jetson 에서 다시 만들면 채워진다)", "status": "info", "link": "docs/interface.md"}], "t2": {"mae60": {"실습실": {"persistence": 40.0, "mean_1h": 51.2, "yesterday": 100.3}, "사무실": {"persistence": 46.4, "mean_1h": 62.0, "yesterday": 142.2}, "회의실": {"persistence": 65.1, "mean_1h": 83.6, "yesterday": 189.7}}}, "t3": {"goal": [{"space": "실습실", "persistence": 40.0, "gru": 31.8, "improve": 20.4}, {"space": "사무실", "persistence": 46.4, "gru": 40.1, "improve": 13.6}, {"space": "회의실", "persistence": 56.6, "gru": 52.3, "improve": 7.5}], "by_horizon": {"실습실": {"persistence": [12.0, 17.1, 23.6, 40.0], "gru": [12.0, 16.6, 20.9, 31.8], "gru_no_time": [11.7, 16.3, 22.4, 34.0], "gru_no_schedule": [11.9, 16.6, 22.5, 42.1]}, "사무실": {"persistence": [9.6, 17.2, 27.2, 46.4], "gru": [9.3, 16.1, 24.9, 40.1], "gru_no_time": [9.5, 17.1, 26.4, 44.0], "gru_no_schedule": [9.3, 16.8, 24.7, 39.6]}, "회의실": {"persistence": [10.4, 22.9, 35.1, 56.6], "gru": [10.5, 23.2, 33.5, 52.3], "gru_no_time": [10.1, 21.9, 33.6, 54.3], "gru_no_schedule": [10.6, 23.3, 33.7, 54.2]}}, "curve": {"epoch": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "train": [0.2892, 0.2592, 0.2492, 0.2435, 0.2394, 0.2362, 0.2335, 0.231, 0.229, 0.2268, 0.2251, 0.2232, 0.22, 0.2157, 0.2139, 0.2125], "valid": [0.1872, 0.1804, 0.1816, 0.1791, 0.1869, 0.1794, 0.1779, 0.174, 0.1763, 0.1724, 0.1742, 0.1753, 0.1747, 0.1725, 0.1743, 0.1732], "sec": [95.3, 67.9, 40.5, 39.7, 53.4, 59.5, 57.3, 55.0, 88.6, 77.6, 58.2, 32.8, 28.5, 17.2, 17.1, 15.2]}, "conditions": ["데이터: 실데이터 InfluxDB iot-bucket + 수집기, 학습 ~2026-09-21, 검증 ~2026-10-06, 시험 2026-10-06 ~ 2026-10-20 (UTC)", "대상 공간: 실습실, 사무실, 회의실 (외기 입력: 사무실 밖)", "입력 120분(24칸) × 15특성, 출력 5~60분 12칸 한 번에, 목표 = 현재값 대비 변화량", "GRU hidden 64, layers 1, dropout 0.1, Adam lr 0.001, batch 256, 에폭 16/40(조기 종료 patience 6, 검증은 일하는 날만), L1 손실, seed 42", "공휴일 8일은 평일에서 제외, 일정 입력: 있음", "장비: Jetson Orin Nano Super, PyTorch CPU 3스레드, 평균 에폭 50.2s, 시험 추론 0.052ms/창(배치 4096)"]}, "t4": {"kinds": ["spike", "stuck", "drift", "noise", "dropout"], "detection": {"규칙": [100.0, 100.0, 20.0, 33.3, 100.0], "오토인코더": [100.0, 0.0, 13.3, 33.3, 0.0], "결합": [100.0, 100.0, 26.7, 40.0, 100.0]}, "total": {"규칙": {"detection": 70.7, "false_alarms": 1.1}, "오토인코더": {"detection": 29.3, "false_alarms": 0.2}, "결합": {"detection": 73.3, "false_alarms": 1.2}}}, "t5": {"vent": {"rule": [0.575, 0.548, 0.777], "logreg": [0.894, 0.13, 0.59], "hgb": [0.869, 0.19, 0.641]}, "occ": {"rule": [0.554, 0.857, 0.789], "logreg": [0.558, 0.878, 0.796], "hgb": [0.608, 0.836, 0.806], "hgb+시각(참고)": [0.903, 0.997, 0.965]}, "metrics": ["recall", "precision", "macro_f1"]}, "t6": {"mae60": {"실습실": {"persistence": 40.1, "gru": 32.2, "chronos": 32.2}, "사무실": {"persistence": 48.7, "gru": 40.6, "chronos": 42.4}, "회의실": {"persistence": 51.3, "gru": 47.1, "chronos": 46.8}}, "latency_ms": 131.5, "memory_mb": 326, "coverage60": [77.3, 81.4]}, "t7": {"latency": {"anomaly_ae": {"onnxruntime_cpu": 0.026, "pytorch_cpu": 0.894, "tensorrt_fp16": 0.007}, "forecast_gru": {"onnxruntime_cpu": 0.119, "pytorch_cpu": 10.977, "tensorrt_fp16": 0.01}}, "power": {"power_vdd_in_mean_mw": 7412, "power_vdd_in_max_mw": 8748, "ram_used_max_mb": 5379}}}</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const charts = [];
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const SPACES = ["실습실", "사무실", "회의실"];
+
+  function base(extra) {
+    const fg = css("--muted"), grid = css("--line");
+    return Object.assign({
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { labels: { color: fg, boxWidth: 12, font: { family: css("--font-body") } } },
+                 tooltip: { mode: "index", intersect: false } },
+      scales: {
+        x: { ticks: { color: fg }, grid: { color: grid } },
+        y: { ticks: { color: fg }, grid: { color: grid }, beginAtZero: true },
+      },
+    }, extra || {});
+  }
+  function goalLine(label, values, color) {   // 목표: 범주마다 따로 그은 가로 표시 (범주끼리 잇지 않는다)
+    return { type: "line", label, data: values, borderColor: color, backgroundColor: color, showLine: false,
+             pointStyle: "line", pointRadius: 22, pointHoverRadius: 22, borderWidth: 3, order: 0 };
+  }
+  function make(id, cfg) {
+    const el = document.getElementById(id);
+    if (!el || typeof Chart === "undefined") return;
+    charts.push(new Chart(el, cfg));
+  }
+
+  function draw() {
+    charts.splice(0).forEach((c) => c.destroy());
+    const A = css("--accent"), B = css("--accent-2"), C = css("--accent-3"), M = css("--muted"), F = css("--fail");
+
+    if (D.t3 && D.t3.curve) {
+      const cv = D.t3.curve;
+      make("c-curve", { type: "line", data: { labels: cv.epoch, datasets: [
+        { label: "학습", data: cv.train, borderColor: B, backgroundColor: B, pointRadius: 2, tension: .2 },
+        { label: "검증 (일하는 날만)", data: cv.valid, borderColor: A, backgroundColor: A, pointRadius: 2, tension: .2 },
+      ] }, options: base({ scales: { x: { title: { display: true, text: "에폭", color: M }, ticks: { color: M }, grid: { color: css("--line") } },
+                                     y: { ticks: { color: M }, grid: { color: css("--line") } } } }) });
+    }
+    if (D.t3) {
+      const g = D.t3.goal;
+      make("c-goal", { type: "bar", data: { labels: g.map((r) => r.space), datasets: [
+        { label: "현재값 유지", data: g.map((r) => r.persistence), backgroundColor: B, order: 1 },
+        { label: "GRU", data: g.map((r) => r.gru), backgroundColor: A, order: 1 },
+        goalLine("목표 (현재값 유지 × 0.7)", g.map((r) => Math.round(r.persistence * 7) / 10), F),
+      ] }, options: base() });
+      const box = document.getElementById("horizon-grid");
+      box.innerHTML = "";
+      Object.entries(D.t3.by_horizon).forEach(([space, v], i) => {
+        const fig = document.createElement("figure");
+        fig.innerHTML = `<h3>${space} · 지평별 CO₂ MAE (ppm)</h3><div class="chart small"><canvas id="c-h${i}" role="img" aria-label="${space} 지평별 오차"></canvas></div>`;
+        box.appendChild(fig);
+        make(`c-h${i}`, { type: "line", data: { labels: ["5분", "15분", "30분", "60분"], datasets: [
+          { label: "현재값 유지", data: v.persistence, borderColor: B, backgroundColor: B, borderDash: [6, 4] },
+          { label: "GRU", data: v.gru, borderColor: A, backgroundColor: A },
+          { label: "GRU (시각·요일 뺌)", data: v.gru_no_time, borderColor: C, backgroundColor: C },
+        ] }, options: base() });
+      });
+    }
+    if (D.t2) {
+      const m = D.t2.mae60, sp = SPACES.filter((s) => m[s]);
+      make("c-baseline", { type: "bar", data: { labels: sp, datasets: [
+        { label: "현재값 유지", data: sp.map((s) => m[s].persistence), backgroundColor: A },
+        { label: "1시간 평균", data: sp.map((s) => m[s].mean_1h), backgroundColor: C },
+        { label: "어제 같은 시각", data: sp.map((s) => m[s].yesterday), backgroundColor: M },
+      ] }, options: base() });
+    }
+    if (D.t6) {
+      const m = D.t6.mae60, sp = SPACES.filter((s) => m[s]);
+      make("c-chronos", { type: "bar", data: { labels: sp, datasets: [
+        { label: "현재값 유지", data: sp.map((s) => m[s].persistence), backgroundColor: B },
+        { label: "GRU", data: sp.map((s) => m[s].gru), backgroundColor: A },
+        { label: "Chronos-Bolt", data: sp.map((s) => m[s].chronos), backgroundColor: C },
+      ] }, options: base() });
+    }
+    if (D.t4) {
+      const t = D.t4;
+      make("c-anomaly", { type: "bar", data: { labels: t.kinds, datasets: [
+        { label: "규칙", data: t.detection["규칙"], backgroundColor: B, order: 1 },
+        { label: "오토인코더", data: t.detection["오토인코더"], backgroundColor: C, order: 1 },
+        { label: "결합", data: t.detection["결합"], backgroundColor: A, order: 1 },
+        goalLine("목표 80%", t.kinds.map(() => 80), F),
+      ] }, options: base({ scales: { x: { ticks: { color: M }, grid: { color: css("--line") } },
+                                     y: { max: 100, beginAtZero: true, ticks: { color: M }, grid: { color: css("--line") } } } }) });
+    }
+    if (D.t5) {
+      const v = D.t5.vent, names = Object.keys(v), colors = [M, B, A, C];
+      make("c-state", { type: "bar", data: { labels: ["재현율", "정밀도", "macro-F1"], datasets:
+        names.map((n, i) => ({ label: n === "rule" ? "규칙" : n, data: v[n], backgroundColor: colors[i % colors.length] }))
+        .concat([goalLine("재현율 목표 0.85", [0.85, null, null], F)]) },
+        options: base({ scales: { x: { ticks: { color: M }, grid: { color: css("--line") } },
+                                  y: { max: 1, beginAtZero: true, ticks: { color: M }, grid: { color: css("--line") } } } }) });
+    }
+    if (D.t7) {
+      const L = D.t7.latency, backends = ["pytorch_cpu", "onnxruntime_cpu", "tensorrt_fp16"], colors = [B, C, A];
+      const models = Object.keys(L);
+      make("c-edge", { type: "bar", data: { labels: models.map((m) => m === "forecast_gru" ? "예측 GRU" : m === "anomaly_ae" ? "오토인코더" : m),
+        datasets: backends.map((b, i) => ({ label: b, data: models.map((m) => L[m][b] ?? null), backgroundColor: colors[i] })) },
+        options: base({ indexAxis: "y", scales: {
+          x: { type: "logarithmic", ticks: { color: M, callback: (v) => [0.001, 0.01, 0.1, 1, 10, 100].includes(+v) ? v : "" }, grid: { color: css("--line") }, title: { display: true, text: "ms (로그)", color: M } },
+          y: { ticks: { color: M }, grid: { color: css("--line") } } } }) });
+    }
+  }
+
+  draw();
+  try {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  } catch (e) { /* 테마 변경 감지가 안 돼도 그림은 그대로 보인다 */ }
+})();
+</script>
+</html>
