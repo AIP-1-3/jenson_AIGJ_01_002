@@ -1,0 +1,152 @@
+# tsinfer 알림 규칙 3종 (+ 결과 끊김). 1분마다 평가하고 policies.yaml 에 따라 tsinfer-notify(디스코드)로 보낸다.
+# 쿼리는 대시보드(tsinfer-live)와 같은 버킷·이름을 쓴다: 센서 iot-bucket, 결과 tsinfer (브리지가 씀).
+# Grafana 알림은 '넓은(wide)' 시계열만 받으므로 쿼리 끝에 keep 으로 _time·_value·태그만 남긴다.
+# 이 파일에는 달러 기호를 쓰지 않는다 (Grafana 가 provisioning 파일의 달러 기호를 환경변수로 바꾸기 때문). 템플릿은 index .Labels 로 쓴다.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: tsinfer
+    folder: tsinfer
+    interval: 1m
+    rules:
+      # 1. 환기 미리 알림 (과제 3·5): 서비스의 60분 뒤 CO₂ 예측이 1,000ppm 을 넘으면
+      - uid: tsinfer-vent-forecast
+        title: 환기 미리 알림 (60분 예측 CO₂ > 1000ppm)
+        condition: C
+        for: 3m                       # 예측이 한두 번 튀는 것으로는 안 보낸다
+        noDataState: OK               # 결과가 없을 때는 4번 규칙이 알린다
+        execErrState: Error
+        labels: {severity: warning, task: "3,5"}
+        annotations:
+          summary: '환기 미리 알림 · {{ index .Labels "space" }}: 60분 뒤 CO₂ 예측 {{ printf "%.0f" (index .Values "B").Value }}ppm — 1,000ppm 넘기 전에 환기하세요'
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: tsinfer-influx
+            model:
+              refId: A
+              query: |-
+                from(bucket: "tsinfer")
+                  |> range(start: -10m)
+                  |> filter(fn: (r) => r._measurement == "tsinfer_result" and r._field == "fc_co2_60")
+                  |> group(columns: ["space"])
+                  |> sort(columns: ["_time"])
+                  |> last()
+                  |> keep(columns: ["_time", "_value", "space"])
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, settings: {mode: dropNN}}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [1000]}}]
+
+      # 2. 이상 탐지 (과제 4): 서비스가 severity=high 경보(값 고정·범위 밖·CO₂ 위험)를 냈으면. data_gap 은 3번이 맡는다.
+      - uid: tsinfer-anomaly
+        title: 이상 탐지 (severity=high)
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, task: "4"}
+        annotations:
+          summary: '이상 탐지 · {{ index .Labels "space" }}: {{ index .Labels "type" }} ({{ index .Labels "metric" }}) — 대시보드 "최근 경보" 표에서 설명 확인'
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: tsinfer-influx
+            model:
+              refId: A
+              query: |-
+                from(bucket: "tsinfer")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "tsinfer_alert" and r._field == "value")
+                  |> filter(fn: (r) => r.severity == "high" and r.type != "data_gap")
+                  |> group(columns: ["space", "type", "metric"])
+                  |> sort(columns: ["_time"])
+                  |> last()
+                  |> map(fn: (r) => ({r with _value: float(v: r._value)}))
+                  |> keep(columns: ["_time", "_value", "space", "type", "metric"])
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, settings: {mode: dropNN}}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0]}}]
+
+      # 3. 수집 끊김 (과제 1): 공간별 마지막 센서값이 10분 넘게 안 들어오면 (서비스 data_gap 기준과 같음)
+      - uid: tsinfer-sensor-gap
+        title: 센서 수집 끊김 (10분 이상)
+        condition: C
+        for: 0m
+        noDataState: Alerting         # 24시간 동안 하나도 없으면 그것도 끊김
+        execErrState: Error
+        labels: {severity: critical, task: "1"}
+        annotations:
+          summary: '수집 끊김 · {{ index .Labels "location" }}: 마지막 센서값이 {{ printf "%.0f" (index .Values "B").Value }}분 전 — 수집기·게이트웨이 확인'
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: tsinfer-influx
+            model:
+              refId: A
+              query: |-
+                from(bucket: "iot-bucket")
+                  |> range(start: -24h)
+                  |> filter(fn: (r) => (r._measurement == "co2" or r._measurement == "temperature") and r._field == "value")
+                  |> group(columns: ["location"])
+                  |> max(column: "_time")
+                  |> map(fn: (r) => ({r with _value: float(v: int(v: now()) - int(v: r._time)) / 60000000000.0}))
+                  |> keep(columns: ["_time", "_value", "location"])
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, settings: {mode: dropNN}}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [10]}}]
+
+      # 4. 서비스 상태 (과제 8): 서비스는 매분 결과를 낸다. 5분 넘게 결과가 없으면 서비스·브리지·MQTT 중 하나가 멈춘 것
+      - uid: tsinfer-service-silent
+        title: 추론 결과 끊김 (5분 이상)
+        condition: C
+        for: 0m
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical, task: "8"}
+        annotations:
+          summary: '서비스 확인 · {{ index .Labels "space" }}: 마지막 추론 결과가 {{ printf "%.0f" (index .Values "B").Value }}분 전 — tsinfer-service·tsinfer-bridge 상태 확인'
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: tsinfer-influx
+            model:
+              refId: A
+              query: |-
+                from(bucket: "tsinfer")
+                  |> range(start: -24h)
+                  |> filter(fn: (r) => r._measurement == "tsinfer_result" and r._field == "data_ok")
+                  |> group(columns: ["space"])
+                  |> max(column: "_time")
+                  |> map(fn: (r) => ({r with _value: float(v: int(v: now()) - int(v: r._time)) / 60000000000.0}))
+                  |> keep(columns: ["_time", "_value", "space"])
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, settings: {mode: dropNN}}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [5]}}]

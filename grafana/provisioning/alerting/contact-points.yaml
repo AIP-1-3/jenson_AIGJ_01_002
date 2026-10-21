@@ -1,0 +1,27 @@
+# 알림 받을 곳. 웹훅 주소는 Jetson .env 의 DISCORD_WEBHOOK_URL 에만 둔다 (저장소·채팅에 올리지 않는다).
+# Grafana 는 provisioning 파일의 ${변수} 를 컨테이너 환경변수로 채운다 (docker-compose.yml 이 .env 에서 넘김).
+#
+# 텔레그램으로 바꿀 때: 아래 receivers 를 텔레그램 블록으로 바꾸고 policies.yaml 은 그대로 둔다 (이름이 같으므로).
+#   - uid: tsinfer-notify
+#     type: telegram
+#     settings:
+#       bottoken: ${TELEGRAM_BOT_TOKEN}
+#       chatid: "${TELEGRAM_CHAT_ID}"
+#       message: (아래 message 와 같게)
+#   docker-compose.yml 의 DISCORD_WEBHOOK_URL 줄도 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 로 바꾼다.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: tsinfer-notify
+    receivers:
+      - uid: tsinfer-notify
+        type: discord
+        disableResolveMessage: false
+        settings:
+          url: ${DISCORD_WEBHOOK_URL}
+          use_discord_username: false
+          # 규칙마다 annotations.summary 한 줄씩. 해제되면 ✅ 로 한 번 더 온다.
+          # InfluxDB 쿼리 자체가 실패하면 Grafana 가 DatasourceError 로 보내므로 그때는 규칙 이름만 적는다.
+          message: |-
+            {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}✅ 해제:{{ end }} {{ if eq .Labels.alertname "DatasourceError" }}Grafana 가 InfluxDB 를 못 읽음 · {{ .Labels.rulename }}{{ else }}{{ .Annotations.summary }}{{ end }}
+            {{ end }}
