@@ -70,6 +70,22 @@ class Persistence:
         return out
 
 
+TAIL_FILL_STEPS = 2   # 10분 = preprocess.short_gap_max_minutes 와 같은 한도
+
+
+def fill_tail(wide: pd.DataFrame, steps: int = TAIL_FILL_STEPS) -> pd.DataFrame:
+    """맨 끝 칸들의 결측만 직전 값으로 채운다 (최대 steps 칸).
+    학습 때는 짧은 결측을 앞뒤 값으로 보간하지만, 서비스에서는 '뒤' 값이 아직 없어 끝 칸이 비고
+    창 전체가 버려진다. 10분 주기 센서 한 대뿐인 회의실은 두 칸에 한 번 이렇게 예측이 비었다.
+    미래를 보지 않도록 앞으로만 채우고, 한도를 넘는 결측(진짜 끊김)은 그대로 둔다."""
+    if steps <= 0 or len(wide) == 0:
+        return wide
+    out = wide.copy()
+    tail = out.iloc[-(steps + 1):]
+    out.iloc[-(steps + 1):] = tail.ffill(limit=steps).to_numpy()
+    return out
+
+
 class GRUForecaster:
     """과제 3 모델. 학습과 같은 forecast.make_windows 로 입력을 만든다 (과제 8-3)."""
 
@@ -83,6 +99,7 @@ class GRUForecaster:
     def predict(self, wide: pd.DataFrame, space: str) -> dict[str, dict[int, float]]:
         if space not in self.spec.spaces or len(wide) < self.spec.lookback:
             return {}
+        wide = fill_tail(wide)
         x, _, info = self._fc.make_windows(wide, self.spec, at=wide.index[-1:], with_target=False)
         info_sp = info["space"].to_numpy() == space
         if not info_sp.any():
