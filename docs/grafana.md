@@ -143,6 +143,8 @@ docker logs grafana-tsinfer-mskim 2>&1 | grep "provision alerting"     # finishe
 
 **실패 → 원인 → 해결:** 첫 시험에서 네 규칙이 모두 `input data must be a wide series but got type long` 오류로 `DatasourceError` 를 보냈다. Flux 결과에 `_start`·`_measurement` 같은 문자 열이 남아 Grafana 가 긴(long) 표로 읽었기 때문이다. 쿼리 끝에 `keep(columns: ["_time", "_value", <태그>])` 를 붙여 해결했고, `tests/test_alerting.py` 가 이를 검사한다.
 
+**실패 → 원인 → 해결 (대시보드):** Jetson 에서 "60분 CO₂ 예측 오차" 패널에 선이 하나도 안 그려지고 범례 Mean·Max 만 나왔다(2026-10-21 14:05~22:25). 실제·예측을 `join` 한 뒤 `map` 으로 새 레코드를 만들면서 `_start`·`_stop` 을 일반 열로 남겼고, Grafana 가 이 고정 시각 열을 시간축으로 써서 모든 점이 한 시각에 몰렸다. `map` 에서 `_time`·`space`·`_value` 만 남겨 고쳤고(같은 모양의 InfluxDB 시험 데이터로 그려지는 것 확인), `tests/test_bridge.py` 가 다시 생기지 않게 검사한다.
+
 ## 검증
 
 | 확인 | 방법 | 결과 |

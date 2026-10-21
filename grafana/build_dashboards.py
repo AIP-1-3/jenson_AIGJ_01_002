@@ -226,7 +226,7 @@ from(bucket: "${{result_bucket}}")
                              display="${__field.labels.series}", steps=CO2_STEPS, repeat="space"))
     advance(9)
 
-    err = "|> map(fn: (r) => ({_time: r._time, _start: r._start_a, _stop: r._stop_a, space: r.space, _value: math.abs(x: r._value_a - r._value_b)}))"
+    err = "|> map(fn: (r) => ({_time: r._time, space: r.space, _value: math.abs(x: r._value_a - r._value_b)}))"
     mae_targets = [
         target(f"""import "math"
 {actual_co2()}

@@ -139,3 +139,14 @@ def test_sink_writes_with_second_precision(monkeypatch):
     sink.write([to_line(to_points(_payload())[0])])
     assert calls and all(str(c["write_precision"]).lower().endswith("s") for c in calls)
     assert not sink.pending
+
+
+def test_dashboard_maps_do_not_emit_extra_time_columns():
+    """map 으로 새 레코드를 만들 때 _start·_stop 을 일반 열로 남기면 Grafana 가 그것을 시간축으로 써서
+    선이 하나도 안 그려진다 (범례 Mean·Max 만 나옴, 2026-10-21 Jetson 60분 오차 패널)."""
+    root = Path(__file__).resolve().parents[1] / "grafana" / "dashboards"
+    d = json.loads((root / "tsinfer-live.json").read_text(encoding="utf-8"))
+    queries = [t["query"] for p in d["panels"] for t in p.get("targets", [])]
+    explicit = [ln for q in queries for ln in q.splitlines() if "map(fn: (r) => ({_time" in ln]
+    assert explicit, "오차 패널의 map 을 못 찾음"
+    assert not [ln for ln in explicit if "_start" in ln or "_stop" in ln]
