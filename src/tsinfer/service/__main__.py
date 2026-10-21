@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from tsinfer.config import ROOT, db_path, load_yaml, mqtt_settings
 from tsinfer.service.app import Runner, create_app
 from tsinfer.service.engine import Engine, EngineConfig
+from tsinfer.service.monitor import SelfMonitor
 from tsinfer.service.predictors import load_forecaster
 from tsinfer.service.publisher import Publisher, publish_prefix
 
@@ -44,7 +45,10 @@ def main() -> int:
     import uvicorn
 
     port = int(os.getenv("API_PORT", "8100"))
-    uvicorn.run(create_app(Runner(engine, publisher)), host="0.0.0.0", port=port, log_level="warning")
+    monitor = SelfMonitor.from_env(cfg)   # SELF_MONITOR=1 일 때만
+    if monitor is not None:
+        log.info("자기 채점 켜짐 (CO₂ %d분 예측, 알림 %s)", monitor.horizon, "디스코드" if monitor.notify else "없음")
+    uvicorn.run(create_app(Runner(engine, publisher, monitor=monitor)), host="0.0.0.0", port=port, log_level="warning")
     return 0
 
 
