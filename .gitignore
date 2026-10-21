@@ -26,3 +26,4 @@ __pycache__/
 # 로그
 /logs/
 *.log
+src/*.egg-info/

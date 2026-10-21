@@ -1,0 +1,21 @@
+# 추론 결과 → InfluxDB 브리지 (Grafana 용). 서비스·수집기와 별개라 이것만 켜고 끌 수 있다.
+#   cp deploy/systemd/tsinfer-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tsinfer-bridge
+# 상태: systemctl --user status tsinfer-bridge / 로그: journalctl --user -u tsinfer-bridge -f
+
+[Unit]
+Description=tsinfer result bridge (MQTT -> InfluxDB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/jenson_AIGJ_01_002
+Environment=PYTHONPATH=%h/jenson_AIGJ_01_002/src
+ExecStart=%h/jenson_AIGJ_01_002/.venv/bin/python -m tsinfer.bridge
+Restart=always
+RestartSec=10
+MemoryMax=200M
+
+[Install]
+WantedBy=default.target

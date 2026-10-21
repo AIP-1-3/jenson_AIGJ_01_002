@@ -1,0 +1,1420 @@
+{
+  "__inputs": [],
+  "title": "tsinfer 실시간 — 교육장 공기질과 추론 결과",
+  "uid": "tsinfer-live",
+  "description": "AIP 3.2 시계열 추론 과제. 센서 원본(iot-bucket)과 서비스 추론 결과(tsinfer)를 한 화면에서 본다.",
+  "tags": [
+    "tsinfer",
+    "jetson",
+    "aip-3.2"
+  ],
+  "timezone": "Asia/Seoul",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
+  "links": [
+    {
+      "title": "저장소",
+      "type": "link",
+      "url": "https://github.com/AIP-1-3/jenson_AIGJ_01_002",
+      "targetBlank": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "InfluxDB",
+        "type": "datasource",
+        "query": "influxdb",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "bucket",
+        "label": "센서 버킷",
+        "type": "textbox",
+        "query": "iot-bucket",
+        "current": {
+          "text": "iot-bucket",
+          "value": "iot-bucket"
+        },
+        "hide": 0
+      },
+      {
+        "name": "result_bucket",
+        "label": "결과 버킷",
+        "type": "textbox",
+        "query": "tsinfer",
+        "current": {
+          "text": "tsinfer",
+          "value": "tsinfer"
+        },
+        "hide": 0
+      },
+      {
+        "name": "space",
+        "label": "공간",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "${ds}"
+        },
+        "definition": "schema.tagValues location",
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"${bucket}\", tag: \"location\", predicate: (r) => r._measurement == \"co2\" or r._measurement == \"temperature\", start: -7d)",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "실시간 센서 — MQTT → InfluxDB ${bucket}",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "현재 CO₂ (최근 30분 마지막 값, 공간 평균)",
+      "description": "1,000ppm 환기 권장(주황), 1,500ppm 위험(빨강). configs/default.yaml thresholds 와 같다.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: -30m)\n  |> filter(fn: (r) => r._measurement == \"co2\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\", \"device_id\"])\n  |> last()\n  |> group(columns: [\"location\"])\n  |> mean()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ppm",
+          "displayName": "${__field.labels.location}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "현재 온도",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: -30m)\n  |> filter(fn: (r) => r._measurement == \"temperature\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\", \"device_id\"])\n  |> last()\n  |> group(columns: [\"location\"])\n  |> mean()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "displayName": "${__field.labels.location}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 18
+              },
+              {
+                "color": "orange",
+                "value": 26
+              },
+              {
+                "color": "red",
+                "value": 28
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "현재 습도",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: -30m)\n  |> filter(fn: (r) => r._measurement == \"humidity\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\", \"device_id\"])\n  |> last()\n  |> group(columns: [\"location\"])\n  |> mean()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "humidity",
+          "displayName": "${__field.labels.location}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 30
+              },
+              {
+                "color": "orange",
+                "value": 60
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "CO₂ (공간별 평균)",
+      "description": "점선: 1,000 / 1,500ppm",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"co2\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ppm",
+          "displayName": "${__field.labels.location}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "온도",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"temperature\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "displayName": "${__field.labels.location}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "습도",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n  |> group(columns: [\"location\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "humidity",
+          "displayName": "${__field.labels.location}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "title": "센서별 마지막 수신 (오래된 순)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "description": "minutes_ago 가 10분을 넘으면 서비스가 data_gap 경보를 낸다 (docs/interface.md).",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => (r._measurement == \"co2\" or r._measurement == \"temperature\" or r._measurement == \"humidity\") and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> group(columns: [\"location\", \"device_id\", \"_measurement\"])\n  |> last()\n  |> map(fn: (r) => ({location: r.location, device_id: r.device_id, metric: r._measurement, value: float(v: r._value), last_seen: r._time,\n      minutes_ago: float(v: int(v: now()) - int(v: r._time)) / 60000000000.0}))\n  |> group()\n  |> sort(columns: [\"minutes_ago\"], desc: true)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "minutes_ago"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "m"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 60
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "수신 건수 (5분당, CO₂+온도)",
+      "description": "0 으로 떨어지면 수집 끊김. 센서 업링크 간격이 바뀌어도 여기서 바로 보인다.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => (r._measurement == \"co2\" or r._measurement == \"temperature\") and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> group(columns: [\"location\"])\n  |> aggregateWindow(every: 5m, fn: count, createEmpty: true)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels.location}",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 10,
+      "title": "추론 결과 — 서비스 MQTT → 브리지 → InfluxDB ${result_bucket}",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "${space}: 실제 CO₂ vs 30·60분 전에 한 예측",
+      "description": "예측점은 예측이 가리키는 시각(만든 시각 + 30·60분)에 찍었다. 실제선과 겹칠수록 정확하다.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "actual = from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"co2\" and r._field == \"value\" and r.location == \"${space}\")\n  |> map(fn: (r) => ({r with _value: float(v: r._value), space: r.location}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\nactual\n  |> set(key: \"series\", value: \"실제\")\n  |> group(columns: [\"series\"])"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_forecast\" and r._field == \"co2\" and r.space == \"${space}\")\n  |> filter(fn: (r) => r.horizon == \"30\" or r.horizon == \"60\")\n  |> group(columns: [\"horizon\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with series: r.horizon + \"분 전 예측\"}))\n  |> group(columns: [\"series\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ppm",
+          "displayName": "${__field.labels.series}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "repeat": "space",
+      "repeatDirection": "h",
+      "maxPerRow": 3
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "60분 CO₂ 예측 오차 |실제−예측| — 범례 mean = 선택 구간 MAE",
+      "description": "과제 3 과 같은 비교를 실시간으로 한다: 서비스 모델 vs 60분 전 값을 그대로 쓴 '현재값 유지'. 5분 평균끼리 비교.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "import \"math\"\nactual = from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"co2\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value), space: r.location}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\npred = from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_forecast\" and r._field == \"co2\" and r.horizon == \"60\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\njoin(tables: {a: actual, b: pred}, on: [\"_time\", \"space\"])\n  |> map(fn: (r) => ({_time: r._time, _start: r._start_a, _stop: r._stop_a, space: r.space, _value: math.abs(x: r._value_a - r._value_b)}))\n  |> set(key: \"method\", value: \"서비스 모델\")\n  |> group(columns: [\"space\", \"method\"])"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "import \"math\"\nactual = from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"co2\" and r._field == \"value\" and contains(value: r.location, set: ${space:json}))\n  |> map(fn: (r) => ({r with _value: float(v: r._value), space: r.location}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)\npast = actual |> timeShift(duration: 60m)\njoin(tables: {a: actual, b: past}, on: [\"_time\", \"space\"])\n  |> map(fn: (r) => ({_time: r._time, _start: r._start_a, _stop: r._stop_a, space: r.space, _value: math.abs(x: r._value_a - r._value_b)}))\n  |> set(key: \"method\", value: \"현재값 유지\")\n  |> group(columns: [\"space\", \"method\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ppm",
+          "displayName": "${__field.labels.space} · ${__field.labels.method}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "spanNulls": 600000,
+            "showPoints": "never",
+            "pointSize": 4
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*현재값 유지"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    6,
+                    4
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 13,
+      "title": "60분 뒤 CO₂ 예측",
+      "description": "서비스가 마지막으로 낸 60분 예측 (fc_co2_60)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"fc_co2_60\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: ppm",
+          "displayName": "${__field.labels.space}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "1,000ppm 도달까지 (분)",
+      "description": "예측이 1,000ppm 에 닿지 않으면 값이 없다 (null).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"co2_ventilate_in_minutes\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "displayName": "${__field.labels.space}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "green",
+                "value": 45
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 15,
+      "title": "마지막 추론 결과 이후 (분)",
+      "description": "서비스는 매분 결과를 낸다. 3분을 넘으면 서비스나 브리지가 멈춘 것.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"data_ok\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> last()\n  |> map(fn: (r) => ({r with _value: float(v: int(v: now()) - int(v: r._time)) / 60000000000.0}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "displayName": "${__field.labels.space}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "type": "state-timeline",
+      "id": 16,
+      "title": "환기 경보 (30분 안에 1,000ppm)",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 56
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"ventilation_alert\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.space}",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "정상",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "환기 필요",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "state-timeline",
+      "id": 17,
+      "title": "이상 경보 (severity=high)",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 56
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"is_anomaly\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.space}",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "정상",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "이상",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "state-timeline",
+      "id": 18,
+      "title": "데이터 정상 (data_ok)",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 56
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"data_ok\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.space}",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "끊김",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "정상",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "state-timeline",
+      "id": 19,
+      "title": "사용 여부 추정 (occupied)",
+      "description": "데이터가 부족하면 값이 없다 (null).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_result\" and r._field == \"occupied\" and contains(value: r.space, set: ${space:json}))\n  |> group(columns: [\"space\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.space}",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "빈 방",
+                  "color": "#8AB8FF",
+                  "index": 0
+                },
+                "1": {
+                  "text": "사용 중",
+                  "color": "purple",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 20,
+      "title": "최근 경보",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${ds}"
+          },
+          "query": "from(bucket: \"${result_bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"tsinfer_alert\" and r._field == \"detail\" and contains(value: r.space, set: ${space:json}))\n  |> group()\n  |> keep(columns: [\"_time\", \"space\", \"type\", \"metric\", \"severity\", \"_value\"])\n  |> rename(columns: {_value: \"detail\"})\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 100)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "severity"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "high": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "medium": {
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ]
+}
