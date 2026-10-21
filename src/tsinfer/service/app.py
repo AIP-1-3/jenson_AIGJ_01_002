@@ -24,9 +24,11 @@ log = logging.getLogger("service")
 
 
 class Runner:
-    def __init__(self, engine: Engine, publisher=None, cycle_log: Path | None = None, interval_s: int = 60):
+    def __init__(self, engine: Engine, publisher=None, cycle_log: Path | None = None, interval_s: int = 60,
+                 monitor=None):
         self.engine = engine
         self.publisher = publisher
+        self.monitor = monitor          # 자기 채점 (SELF_MONITOR=1 일 때만, 없으면 기존 동작 그대로)
         self.cycle_log = cycle_log or ROOT / "logs" / "service_cycles.jsonl"
         self.interval_s = interval_s
         self.latest: dict[str, Any] | None = None
@@ -54,6 +56,13 @@ class Runner:
                     log.exception("발행 실패")
                     rec["published"] = False
                     rec["publish_error"] = repr(e)
+            if self.monitor is not None:
+                try:
+                    sent = self.monitor.observe(result)
+                    rec["monitor"] = {**self.monitor.snapshot(), "sent": sent}
+                except Exception as e:  # 채점 실패로 추론을 멈추지 않는다
+                    log.exception("자기 채점 실패")
+                    rec["monitor_error"] = repr(e)
         except Exception as e:
             log.exception("추론 주기 실패")
             self.last_error = repr(e)
@@ -107,7 +116,7 @@ def create_app(runner: Runner, start_loop: bool = True) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, Any]:
         latest = runner.latest
-        return {
+        body = {
             "ok": runner.consecutive_failures == 0 and latest is not None,
             "started_at": runner.started_at.isoformat(),
             "last_generated_at": latest["generated_at"] if latest else None,
@@ -116,6 +125,10 @@ def create_app(runner: Runner, start_loop: bool = True) -> FastAPI:
             "model": latest["model"] if latest else None,
             "data_ok": {s: b["data_ok"] for s, b in latest["spaces"].items()} if latest else {},
         }
+        monitor = getattr(runner, "monitor", None)
+        if monitor is not None:   # 켜졌을 때만 필드가 생긴다
+            body["monitor"] = monitor.snapshot()
+        return body
 
     @app.get("/latest")
     def latest_all() -> dict[str, Any]:

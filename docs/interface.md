@@ -58,3 +58,18 @@
 - 매 주기를 `logs/service_cycles.jsonl` 에 한 줄씩 남긴다 (성공 여부, 소요 시간, 공간별 data_ok·경보, 발행 여부).
 - 12시간 무중단 보고: `python -m tsinfer.service.summary --hours 12`
   → 주기 수/기대 주기 수, 실패 주기, 최대 공백(분), p95 소요 시간, 공간별 끊김 분.
+
+## 자기 채점 (선택, 과제 8 심화)
+`.env` 에 `SELF_MONITOR=1` 일 때만 켜진다. 없으면 위 형식·동작 그대로.
+- 매 주기 공간별 CO₂ 60분 예측을 보관했다가, 그 5분 칸이 완성되면 엔진의 `current.co2` 와 비교해 채점한다.
+- `GET /health` 에 `monitor` 필드가 생긴다 (켜졌을 때만). `logs/service_cycles.jsonl` 각 줄에도 `monitor`(+ 이번 주기 알림 수 `sent`).
+
+| 필드 | 뜻 |
+|---|---|
+| `monitor.spaces.{공간}.n` / `mae` / `mae_persistence` / `ratio` | 최근 60개 채점의 MAE, 같은 시점 현재값 유지 MAE, 그 비율 |
+| `monitor.spaces.{공간}.alerting` | 경고 상태 (MAE ≥150ppm, 또는 비율 >1.2 이고 MAE ≥30ppm; 12개 이상 채점 후) |
+| `monitor.pending` / `expired` / `alerts_sent` / `notify` | 채점 대기 예측 수, 데이터 끊김으로 못 채점한 수, 보낸 알림 수, 알림 채널 유무 |
+
+- 알림: `DISCORD_WEBHOOK_URL`(디스코드 웹훅)로 보낸다. 비어 있으면 채점만 하고 알림은 건너뛴다.
+  같은 공간 경고는 1시간에 한 번만, 정상으로 돌아오면 한 번 알린다. 전송 실패(3초 타임아웃)는 서비스에 영향 없음.
+- `python -m tsinfer.service.summary` 는 기록에 `monitor` 가 있으면 공간별 최근 MAE 와 알림 횟수를 함께 낸다.
