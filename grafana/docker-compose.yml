@@ -1,0 +1,27 @@
+# 학교 Grafana 를 못 쓸 때의 대안: Jetson 에 내 Grafana 를 띄운다 (대시보드·데이터 소스 자동 등록).
+#   docker compose --env-file .env -f grafana/docker-compose.yml up -d     # 저장소 루트에서
+#   브라우저: http://<jetson>:${GRAFANA_PORT:-8130}  (계정 admin / .env 의 GRAFANA_ADMIN_PASSWORD)
+# 공용 보드라 메모리 상한 300MB, 포트는 내 대역(8100~8199) 안에서 고른다.
+services:
+  grafana:
+    image: grafana/grafana-oss:11.3.0          # arm64 이미지 포함
+    container_name: grafana-tsinfer-${USER:-me}
+    restart: unless-stopped
+    mem_limit: 300m
+    ports:
+      - "${GRAFANA_PORT:-8130}:3000"
+    environment:
+      # 접속 정보는 .env 에서만 받는다 (이 파일·저장소에는 값을 넣지 않는다)
+      INFLUX_URL: ${INFLUX_URL:?INFLUX_URL 을 .env 에 넣으세요}
+      INFLUX_ORG: ${INFLUX_ORG:?INFLUX_ORG 를 .env 에 넣으세요}
+      INFLUX_TOKEN: ${INFLUX_TOKEN:?INFLUX_TOKEN 을 .env 에 넣으세요}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 를 .env 에 넣으세요}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tsinfer-live.json
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+volumes:
+  grafana-data:

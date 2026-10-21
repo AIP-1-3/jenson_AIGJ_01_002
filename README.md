@@ -6,6 +6,8 @@
 **시연:** 조회 API `http://<jetson>:8100/docs` (형식 [docs/interface.md](docs/interface.md)), MQTT `tsinfer/mskim/<공간>` (retain). 영상은 12시간 가동 시험 때 녹화 예정.
 **환경:** Jetson Orin Nano Super 8GB · JetPack 7.2.1 (L4T R39.2.1, Ubuntu 24.04, Python 3.12) · 전력 모드 MAXN_SUPER · 상시 사용 메모리 수집기 ≤300MB + 서비스 ≤1.5GB
 
+**시각화:** 실시간 Grafana 대시보드(센서 + 추론 결과)와 과제 결과 한 페이지 [reports/summary.html](reports/summary.html) — 설치는 [docs/grafana.md](docs/grafana.md)
+
 과제 원문: `AIP-1/timeseries-inference` (이슈 curriculum#6) · 최종 보고서: [docs/report.md](docs/report.md) · 진행 체크리스트: [docs/progress.md](docs/progress.md)
 
 **역할:** 개인 과제로 설계 판단·Jetson 실행·결과 해석은 민서가 했고, 코드 초안과 문서 정리에 AI 를 썼다(범위와 검증은 [보고서 7장](docs/report.md#7-ai-활용과-검증)). 제출 전 셀프 채점: [보고서 10장](docs/report.md#10-셀프-채점-추정-루브릭-a).
@@ -20,7 +22,7 @@
 | 성능 (25) | 과제 3~7 확인 기준 대비 수치표 (같은 시험 시점) | [reports/](reports), [보고서 2장](docs/report.md#2-성능) |
 | 해석 (30) | 데이터 진단서, 공간별 오차 원인, 가장 많이 틀린 상황, 의외였던 발견 | [02_diagnosis](reports/02_diagnosis.md), [보고서 3장](docs/report.md#3-해석) |
 | 공정한 평가 (10) | 시간순 분할, 정규화는 학습 기간만, 모든 방법을 같은 시점에서 비교, 표마다 측정 조건 | [split.py](src/tsinfer/data/split.py), [보고서 4장](docs/report.md#4-공정한-평가) |
-| 재사용성 (10) | 설정 파일만 바꾸면 되는 구조, 학습·서비스 공통 전처리, 테스트 38개, 일괄 실행 스크립트 | [configs/](configs), [tests/](tests), [scripts/run_all.sh](scripts/run_all.sh), [보고서 5장](docs/report.md#5-재사용성) |
+| 재사용성 (10) | 설정 파일만 바꾸면 되는 구조, 학습·서비스 공통 전처리, 테스트 44개, 일괄 실행 스크립트 | [configs/](configs), [tests/](tests), [scripts/run_all.sh](scripts/run_all.sh), [보고서 5장](docs/report.md#5-재사용성) |
 
 ## 구조
 
@@ -35,18 +37,21 @@ flowchart LR
   E --> A[조회 API :8100]
   E --> M[MQTT retain<br/>tsinfer/mskim/공간]
   E --> L[logs/service_cycles.jsonl]
+  M --> B[브리지<br/>tsinfer.bridge] --> R[(InfluxDB tsinfer 버킷)] --> G[Grafana<br/>tsinfer-live]
+  I --> G
 ```
 
 학습과 서비스는 같은 전처리(`tsinfer.data.preprocess`)와 같은 입력 생성(`forecast.make_windows`)을 쓴다. 학습 때와 서비스 때 입력이 어긋나는 것을 막기 위해서다.
 
 ```
 configs/        default.yaml(공간·전처리·분할·임계값·공휴일) sensors.yaml(토픽 매핑) schedule.yaml(사용 여부 정답)
-src/tsinfer/    collector/ 과제1 · ingest/ 과거 데이터 · data/ 과제2 · models/ 과제3~7 · service/ 과제8
-deploy/systemd/ 재부팅 후 자동 시작 (user 서비스)
+src/tsinfer/    collector/ 과제1 · ingest/ 과거 데이터 · data/ 과제2 · models/ 과제3~7 · service/ 과제8 · bridge/ 결과→InfluxDB · viz/ 결과 요약 페이지
+deploy/systemd/ 재부팅 후 자동 시작 (user 서비스: 수집기·서비스·결과 브리지)
+grafana/        실시간 대시보드 JSON·생성 스크립트, Jetson 용 docker compose (docs/grafana.md)
 scripts/        run_all.sh 과제 2~7 보고서 일괄 생성
 docs/           report.md 최종 보고서 · interface.md 결과 형식 · progress.md 체크리스트
 reports/        과제별 결과 (Jetson 에서 생성 후 커밋, 측정 조건 포함)
-tests/          pytest 38개 (합성 데이터로 각 과제 로직 검증)
+tests/          pytest 44개 (합성 데이터로 각 과제 로직 검증)
 ```
 
 ## 기술 스택과 고른 이유
@@ -70,7 +75,7 @@ python3 -m venv .venv --system-site-packages        # JetPack 의 TensorRT 바�
 .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/pip install onnx onnxruntime chronos-forecasting "numpy<2"   # 과제 6·7 (NumPy 1.26 유지)
 cp .env.example .env && chmod 600 .env               # 접속 정보는 .env 에만 (저장소에 넣지 않음)
-.venv/bin/python -m pytest                           # 38 passed
+.venv/bin/python -m pytest                           # 44개 (torch 없는 환경에선 3개 건너뜀)
 free -h                                              # 학습 전 여유 메모리 확인 (공용 장비)
 ```
 
@@ -88,6 +93,14 @@ git add reports && git commit -m "과제 결과 보고서 갱신 (측정: Jetson
 sed -i 's/^SERVICE_MODEL=.*/SERVICE_MODEL=gru/' .env && systemctl --user restart tsinfer-service
 curl -s localhost:8100/health
 .venv/bin/python -m tsinfer.service.summary --hours 12   # 12시간 무중단 보고
+```
+
+```bash
+# 4) 시각화: 결과 요약 페이지 + Grafana (InfluxDB 결과 버킷·토큰 준비는 docs/grafana.md)
+.venv/bin/python -m tsinfer.viz.results            # reports/summary.html
+cp deploy/systemd/tsinfer-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+systemctl --user enable --now tsinfer-bridge       # 추론 결과 → InfluxDB tsinfer 버킷 (서비스는 재시작 안 됨)
+# Grafana: grafana/dashboards/tsinfer-live.json 가져오기, 또는 docker compose --env-file .env -f grafana/docker-compose.yml up -d
 ```
 
 과제별 명령: `tsinfer.data.baselines` · `tsinfer.data.diagnose` (2) · `tsinfer.models.forecast --compare-time --schedule` (3) · `tsinfer.models.anomaly` (4) · `tsinfer.models.state` (5) · `tsinfer.models.pretrained` (6) · `tsinfer.models.edge` (7) · `tsinfer.service` (8).
