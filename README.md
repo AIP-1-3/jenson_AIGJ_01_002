@@ -22,7 +22,7 @@
 | 성능 (25) | 과제 3~7 확인 기준 대비 수치표 (같은 시험 시점) | [reports/](reports), [보고서 2장](docs/report.md#2-성능) |
 | 해석 (30) | 데이터 진단서, 공간별 오차 원인, 가장 많이 틀린 상황, 의외였던 발견 | [02_diagnosis](reports/02_diagnosis.md), [보고서 3장](docs/report.md#3-해석) |
 | 공정한 평가 (10) | 시간순 분할, 정규화는 학습 기간만, 모든 방법을 같은 시점에서 비교, 표마다 측정 조건 | [split.py](src/tsinfer/data/split.py), [보고서 4장](docs/report.md#4-공정한-평가) |
-| 재사용성 (10) | 설정 파일만 바꾸면 되는 구조, 학습·서비스 공통 전처리, 테스트 50개, 일괄 실행 스크립트 | [configs/](configs), [tests/](tests), [scripts/run_all.sh](scripts/run_all.sh), [보고서 5장](docs/report.md#5-재사용성) |
+| 재사용성 (10) | 설정 파일만 바꾸면 되는 구조, 학습·서비스 공통 전처리, 테스트 96개, 일괄 실행 스크립트 | [configs/](configs), [tests/](tests), [scripts/run_all.sh](scripts/run_all.sh), [보고서 5장](docs/report.md#5-재사용성) |
 
 ## 구조
 
@@ -48,10 +48,10 @@ configs/        default.yaml(공간·전처리·분할·임계값·공휴일) se
 src/tsinfer/    collector/ 과제1 · ingest/ 과거 데이터 · data/ 과제2 · models/ 과제3~7 · service/ 과제8 · bridge/ 결과→InfluxDB · viz/ 결과 요약 페이지
 deploy/systemd/ 재부팅 후 자동 시작 (user 서비스: 수집기·서비스·결과 브리지)
 grafana/        실시간 대시보드 JSON·생성 스크립트, Jetson 용 docker compose (docs/grafana.md)
-scripts/        run_all.sh 과제 2~7 보고서 일괄 생성
+scripts/        run_all.sh 과제 2~7 보고서 일괄 생성 (deep: 심화 1b~8b)
 docs/           report.md 최종 보고서 · interface.md 결과 형식 · progress.md 체크리스트
 reports/        과제별 결과 (Jetson 에서 생성 후 커밋, 측정 조건 포함)
-tests/          pytest 50개 (합성 데이터로 각 과제 로직 검증)
+tests/          pytest 96개 (합성 데이터로 각 과제·심화 로직 검증)
 ```
 
 ## 기술 스택과 고른 이유
@@ -75,7 +75,7 @@ python3 -m venv .venv --system-site-packages        # JetPack 의 TensorRT 바�
 .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/pip install onnx onnxruntime chronos-forecasting "numpy<2"   # 과제 6·7 (NumPy 1.26 유지)
 cp .env.example .env && chmod 600 .env               # 접속 정보는 .env 에만 (저장소에 넣지 않음)
-.venv/bin/python -m pytest                           # 50 passed (torch 없는 환경에선 torch 쓰는 모듈 3개가 통째로 skip)
+.venv/bin/python -m pytest                           # 96 passed (torch 없는 환경에선 torch 쓰는 모듈 3개가 통째로 skip)
 free -h                                              # 학습 전 여유 메모리 확인 (공용 장비)
 ```
 
@@ -86,7 +86,7 @@ cp deploy/systemd/*.service ~/.config/systemd/user/ && systemctl --user daemon-r
 systemctl --user enable --now tsinfer-collector tsinfer-service
 
 # 2) 과제 2~7 보고서 (tmux 안에서, 6·7 은 팀 GPU 락 자동 사용)
-./scripts/run_all.sh                 # 또는 ./scripts/run_all.sh 3 5
+./scripts/run_all.sh                 # 또는 ./scripts/run_all.sh 3 5, 심화는 ./scripts/run_all.sh deep
 git add reports && git commit -m "과제 결과 보고서 갱신 (측정: Jetson, $(date +%F))" && git push
 
 # 3) 서비스를 학습 모델로 교체, 상태 확인

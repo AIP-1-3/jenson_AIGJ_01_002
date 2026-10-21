@@ -97,3 +97,26 @@ def test_two_sensors_in_same_space_are_kept_apart(tmp_path):
         body = ('{"time":"2026-10-20T01:38:00+00:00","deviceInfo":{"deviceName":"%s",'
                 '"tags":{"location":"lab"}},"object":{"co2":900}}' % name).encode()
         assert store.write(m.parse("application/a/device/x/event/up", body, NOW)) == 1
+
+
+def test_format_change_needs_only_config():
+    """과제 1 산출물 '형식 변경 가정': 펌웨어 갱신으로 CO₂ 키가 object.co2 → object.co2_ppm,
+    시각이 ISO 문자열 → epoch ms(필드 ts)로 바뀌었다고 가정. 코드는 그대로 두고 설정 두 줄만 바꾼다."""
+    import copy
+
+    cfg = load_yaml("sensors.yaml")
+    new_msg = CHIRP.replace(b'"co2":612', b'"co2_ppm":612').replace(
+        b'"time":"2026-10-20T01:38:19.287+00:00"', b'"ts":1760924299287')
+    topic = "application/96b4/device/24e124725d081175/event/up"
+
+    before = {r.metric for r in Mapper(cfg).parse(topic, new_msg, NOW)}
+    assert "co2" not in before                      # 바꾸기 전: CO₂ 가 조용히 빠진다
+
+    changed = copy.deepcopy(cfg)
+    env = next(s for s in changed["sources"] if s["name"] == "chirpstack_env")
+    env["payload"]["co2"] = "object.co2_ppm"        # 바꾼 줄 1
+    env["timestamp"] = {"field": "ts", "format": "epoch_ms"}   # 바꾼 줄 2
+    out = Mapper(changed).parse(topic, new_msg, NOW)
+    co2 = next(r for r in out if r.metric == "co2")
+    assert co2.value == 612.0
+    assert co2.sensor_ts == datetime.fromtimestamp(1760924299.287, tz=timezone.utc)
