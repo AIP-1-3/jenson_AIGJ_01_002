@@ -78,12 +78,13 @@ InfluxDB 화면에 로그인 → Load Data → Buckets → `tsinfer` 버킷 만�
 
 ```bash
 cd ~/jenson_AIGJ_01_002
-nano .env      # INFLUX_URL, INFLUX_ORG, INFLUX_TOKEN, INFLUX_RESULT_BUCKET=tsinfer, INFLUX_WRITE_TOKEN
+nano .env      # 맨 아래에 INFLUX_RESULT_URL, INFLUX_RESULT_ORG, INFLUX_RESULT_BUCKET=tsinfer, INFLUX_WRITE_TOKEN 추가 (기존 INFLUX_* 는 과거 데이터용이라 그대로 둔다)
 ```
 
 ### 2. 브리지
 
 ```bash
+.venv/bin/python -m tsinfer.bridge --check            # 점 1개를 써 본다. '쓰기 성공' 이면 주소·조직·토큰·버킷이 맞다
 .venv/bin/python -m tsinfer.bridge --dry-run          # InfluxDB 에 쓰지 않고 1분 안에 line protocol 이 찍히는지 확인 (Ctrl+C)
 cp deploy/systemd/tsinfer-bridge.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now tsinfer-bridge
