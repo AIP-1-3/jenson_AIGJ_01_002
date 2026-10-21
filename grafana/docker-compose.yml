@@ -1,4 +1,5 @@
-# 학교 Grafana 를 못 쓸 때의 대안: Jetson 에 내 Grafana 를 띄운다 (대시보드·데이터 소스 자동 등록).
+# Jetson 에 내 Grafana 를 띄운다 (대시보드·데이터 소스 자동 등록).
+# 학교 서버(influx.java21.net)는 Jetson 망에서 막혀 있어(2026-10-21 확인) 교육장 InfluxDB(.env 의 INFLUX_URL)를 본다.
 #   docker compose --env-file .env -f grafana/docker-compose.yml up -d     # 저장소 루트에서
 #   브라우저: http://<jetson>:${GRAFANA_PORT:-8130}  (계정 admin / .env 의 GRAFANA_ADMIN_PASSWORD)
 # 공용 보드라 메모리 상한 300MB, 포트는 내 대역(8100~8199) 안에서 고른다.
@@ -14,7 +15,8 @@ services:
       # 접속 정보는 .env 에서만 받는다 (이 파일·저장소에는 값을 넣지 않는다)
       INFLUX_URL: ${INFLUX_URL:?INFLUX_URL 을 .env 에 넣으세요}
       INFLUX_ORG: ${INFLUX_ORG:?INFLUX_ORG 를 .env 에 넣으세요}
-      INFLUX_TOKEN: ${INFLUX_TOKEN:?INFLUX_TOKEN 을 .env 에 넣으세요}
+      # iot-bucket 읽기 + tsinfer 읽기 권한이 있는 토큰 (과거 데이터용 INFLUX_TOKEN 과 따로 둔다)
+      INFLUX_TOKEN: ${GRAFANA_INFLUX_TOKEN:?GRAFANA_INFLUX_TOKEN 을 .env 에 넣으세요}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 를 .env 에 넣으세요}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"

@@ -9,6 +9,8 @@
 - 쓰기 실패분은 메모리에 최대 MAX_PENDING 점까지 들고 있다가 다음 메시지 때 같이 보낸다.
 - --dry-run: InfluxDB 에 쓰지 않고 line protocol 을 화면에 찍는다 (접속 정보 없이 형식 확인용).
 - --check: 점 1개(tsinfer_bridge_check)를 써 보고 끝낸다. 주소·조직·토큰·버킷 권한 확인용.
+- BRIDGE_MIRROR_SENSORS=1: 수집기 SQLite 센서값도 결과 서버의 INFLUX_MIRROR_BUCKET(기본 iot-bucket)에 복사한다.
+  원격 InfluxDB 에 닿지 않아 Jetson 안의 InfluxDB 를 쓸 때만 켠다 (mirror.py). 원본 서버(INFLUX_URL)에는 절대 쓰지 않는다.
 """
 from __future__ import annotations
 
@@ -43,18 +45,18 @@ def to_line(p: Point) -> str:
 
 
 class InfluxSink:
-    def __init__(self):
+    def __init__(self, bucket: str | None = None, max_pending: int = MAX_PENDING):
         from influxdb_client import InfluxDBClient
         from influxdb_client.client.write_api import SYNCHRONOUS
 
         token = os.getenv("INFLUX_WRITE_TOKEN") or os.environ["INFLUX_TOKEN"]
         self.org = os.getenv("INFLUX_RESULT_ORG") or os.environ["INFLUX_ORG"]
-        self.bucket = os.getenv("INFLUX_RESULT_BUCKET") or "tsinfer"
-        if self.bucket in {os.getenv("INFLUX_BUCKET") or "iot-bucket", "sensor_data"}:
+        self.bucket = bucket or os.getenv("INFLUX_RESULT_BUCKET") or "tsinfer"
+        if bucket is None and self.bucket in {os.getenv("INFLUX_BUCKET") or "iot-bucket", "sensor_data"}:
             raise RuntimeError("INFLUX_RESULT_BUCKET 이 원본 버킷과 같습니다. 결과는 별도 버킷에 씁니다.")
         self.client = InfluxDBClient(url=os.getenv("INFLUX_RESULT_URL") or os.environ["INFLUX_URL"], token=token, org=self.org, timeout=10_000)
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
-        self.pending: deque[str] = deque(maxlen=MAX_PENDING)
+        self.pending: deque[str] = deque(maxlen=max_pending)
 
     def check(self) -> None:
         """실패하면 예외를 그대로 올려 원인(401 토큰, 404 버킷 등)을 화면에 보인다."""
@@ -65,7 +67,8 @@ class InfluxSink:
         self.pending.extend(lines)
         batch = list(self.pending)
         try:
-            self.write_api.write(bucket=self.bucket, org=self.org, record=batch)
+            for i in range(0, len(batch), 5000):     # 요청 하나가 너무 커지지 않게
+                self.write_api.write(bucket=self.bucket, org=self.org, record=batch[i:i + 5000])
         except Exception as e:  # 네트워크·권한 오류로 브리지가 죽지 않게 한다
             log.warning("InfluxDB 쓰기 실패(%s) — %d점 보류", type(e).__name__, len(self.pending))
             return
@@ -73,6 +76,20 @@ class InfluxSink:
 
     def close(self) -> None:
         self.client.close()
+
+
+def mirror_enabled() -> bool:
+    if (os.getenv("BRIDGE_MIRROR_SENSORS") or "").strip() not in ("1", "true", "yes"):
+        return False
+    target = (os.getenv("INFLUX_RESULT_URL") or "").rstrip("/")
+    if not target or target == (os.getenv("INFLUX_URL") or "").rstrip("/"):
+        # 원본 서버에 센서값을 다시 쓰면 공용 데이터가 중복된다
+        raise RuntimeError("BRIDGE_MIRROR_SENSORS 는 INFLUX_RESULT_URL 이 Jetson 안의 InfluxDB 일 때만 켭니다.")
+    return True
+
+
+def mirror_sink() -> InfluxSink:
+    return InfluxSink(bucket=os.getenv("INFLUX_MIRROR_BUCKET") or "iot-bucket", max_pending=200_000)
 
 
 def main() -> int:
@@ -85,9 +102,11 @@ def main() -> int:
     if args.check:
         load_dotenv(ROOT / ".env")
         sink = InfluxSink()
-        sink.check()
-        print(f"쓰기 성공: {sink.client.url} org={sink.org} bucket={sink.bucket}")
-        sink.close()
+        sinks = [sink] + ([mirror_sink()] if mirror_enabled() else [])
+        for sk in sinks:
+            sk.check()
+            print(f"쓰기 성공: {sk.client.url} org={sk.org} bucket={sk.bucket}")
+            sk.close()
         return 0
 
     settings = mqtt_settings()          # .env 도 여기서 읽힌다
@@ -96,6 +115,15 @@ def main() -> int:
         raise RuntimeError("PUBLISH_PREFIX 가 비어 있습니다. 서비스와 같은 값(예: tsinfer/<이름>)을 넣으세요.")
     sink = None if args.dry_run else InfluxSink()
     topic = f"{prefix}/+"
+    mirror = None
+    if sink is not None and mirror_enabled():
+        from tsinfer.bridge.mirror import SensorMirror
+        from tsinfer.config import db_path
+
+        mirror = SensorMirror(db_path(), mirror_sink(),
+                              backfill_hours=float(os.getenv("BRIDGE_MIRROR_BACKFILL_HOURS") or 24))
+        mirror.start()
+        log.info("센서 복사 켬: %s → bucket=%s", db_path(), mirror.sink.bucket)
 
     # 수집기·서비스와 같은 client id 면 브로커가 한쪽을 끊는다 → 접미사
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{settings.client_id}-bridge")
@@ -129,6 +157,8 @@ def main() -> int:
     log.info("브리지 시작 (%s)", ROOT)
     client.connect_async(settings.host, settings.port, keepalive=60)
     client.loop_forever(retry_first_connection=True)
+    if mirror is not None:
+        mirror.stop()
     if sink is not None:
         sink.close()
     return 0
