@@ -68,9 +68,13 @@ class InfluxSink:
         batch = list(self.pending)
         try:
             for i in range(0, len(batch), 5000):     # 요청 하나가 너무 커지지 않게
-                self.write_api.write(bucket=self.bucket, org=self.org, record=batch[i:i + 5000])
+                # 줄 끝 시각은 초 단위다. 정밀도를 안 주면 기본값(ns)으로 읽혀 1970년 점이 되고,
+                # 보관 기간 밖이라 서버가 거부한다 (2026-10-21 Jetson 에서 ApiException 반복).
+                self.write_api.write(bucket=self.bucket, org=self.org, record=batch[i:i + 5000],
+                                     write_precision="s")
         except Exception as e:  # 네트워크·권한 오류로 브리지가 죽지 않게 한다
-            log.warning("InfluxDB 쓰기 실패(%s) — %d점 보류", type(e).__name__, len(self.pending))
+            detail = f"{getattr(e, 'status', '')} {str(getattr(e, 'body', '') or e)[:200]}".strip()
+            log.warning("InfluxDB 쓰기 실패(%s: %s) — %d점 보류", type(e).__name__, detail, len(self.pending))
             return
         self.pending.clear()
 
