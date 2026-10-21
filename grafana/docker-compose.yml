@@ -18,6 +18,8 @@ services:
       # iot-bucket 읽기 + tsinfer 읽기 권한이 있는 토큰 (과거 데이터용 INFLUX_TOKEN 과 따로 둔다)
       INFLUX_TOKEN: ${GRAFANA_INFLUX_TOKEN:?GRAFANA_INFLUX_TOKEN 을 .env 에 넣으세요}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 를 .env 에 넣으세요}
+      # 알림(provisioning/alerting)을 보낼 디스코드 웹훅. 텔레그램으로 바꾸면 contact-points.yaml 주석 참고
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:?DISCORD_WEBHOOK_URL 을 .env 에 넣으세요 (docs/grafana.md 알림)}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tsinfer-live.json

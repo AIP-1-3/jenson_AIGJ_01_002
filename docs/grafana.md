@@ -116,6 +116,33 @@ docker compose --env-file .env -f grafana/docker-compose.yml up -d
 
 보고서 표(`reports/*.md`)만 읽으므로 숫자가 보고서와 항상 같다. `logs/service_cycles.jsonl` 이 있으면 과제 8 의 12시간 가동 요약도 판정표에 들어간다. 그림마다 그림 속 숫자를 글로 적은 설명이 붙는다.
 
+## 알림 (디스코드, Grafana Alerting)
+
+**무엇:** 대시보드를 계속 보고 있지 않아도, 과제에서 만든 판단이 디스코드 채널로 온다. 규칙은 `grafana/provisioning/alerting/` 에 파일로 두어 Grafana 를 다시 띄우면 그대로 등록된다.
+
+| 규칙 (`rules.yaml`) | 조건 (1분마다 평가) | 과제 | 메시지 예 |
+|---|---|---|---|
+| 환기 미리 알림 | 공간별 `tsinfer_result.fc_co2_60` 마지막 값 > 1,000ppm 이 3분 지속 | 3·5 | 🔴 환기 미리 알림 · 실습실: 60분 뒤 CO₂ 예측 1100ppm — 1,000ppm 넘기 전에 환기하세요 |
+| 이상 탐지 | 최근 5분에 `tsinfer_alert` severity=high (값 고정·범위 밖·CO₂ 위험, data_gap 제외) | 4 | 🔴 이상 탐지 · 실습실: stuck (co2) |
+| 센서 수집 끊김 | `iot-bucket` 공간별 마지막 CO₂·온도가 10분 넘게 전 (서비스 data_gap 기준과 같음) | 1 | 🔴 수집 끊김 · 사무실: 마지막 센서값이 31분 전 |
+| 추론 결과 끊김 | 공간별 마지막 `tsinfer_result` 가 5분 넘게 전 (서비스는 매분 냄) | 8 | 🔴 서비스 확인 · 회의실: 마지막 추론 결과가 21분 전 |
+
+조건이 풀리면 ✅ 해제 메시지가 한 번 더 온다. 같은 규칙·공간은 묶어서 보내고, 계속 켜져 있으면 4시간마다 한 번만 다시 보낸다(`policies.yaml`).
+
+**왜 Grafana 알림인가:** 대안은 서비스 코드에서 직접 웹훅을 부르는 것이다. 그러면 12시간 가동 중인 서비스를 고치고 재시작해야 하고, 서비스가 죽으면 "죽었다" 는 알림도 못 보낸다. Grafana 는 서비스 밖에서 InfluxDB 를 보므로 서비스·브리지 멈춤까지 알릴 수 있고, 수집기·서비스·브리지를 건드리지 않는다. 받는 곳(contact point)만 바꾸면 텔레그램으로도 바뀐다(`contact-points.yaml` 주석).
+
+**어떻게:** 웹훅 주소는 Jetson `.env` 의 `DISCORD_WEBHOOK_URL` 에만 두고 `docker-compose.yml` 이 컨테이너 환경변수로 넘긴다. Grafana 는 provisioning 파일의 `${...}` 를 환경변수로 채우므로, 규칙 파일에는 달러 기호를 쓰지 않는다(템플릿은 `index .Labels "space"`).
+
+```bash
+# Jetson, 저장소 루트. .env 에 DISCORD_WEBHOOK_URL 을 넣은 뒤 Grafana 만 다시 만든다 (수집기·서비스·브리지는 그대로)
+docker compose --env-file .env -f grafana/docker-compose.yml up -d
+docker logs grafana-tsinfer-mskim 2>&1 | grep "provision alerting"     # finished to provision alerting
+```
+
+확인: Grafana → Alerting → Alert rules 에 `tsinfer` 폴더 규칙 4개, Contact points 에 `tsinfer-notify`.
+
+**실패 → 원인 → 해결:** 첫 시험에서 네 규칙이 모두 `input data must be a wide series but got type long` 오류로 `DatasourceError` 를 보냈다. Flux 결과에 `_start`·`_measurement` 같은 문자 열이 남아 Grafana 가 긴(long) 표로 읽었기 때문이다. 쿼리 끝에 `keep(columns: ["_time", "_value", <태그>])` 를 붙여 해결했고, `tests/test_alerting.py` 가 이를 검사한다.
+
 ## 검증
 
 | 확인 | 방법 | 결과 |
@@ -123,7 +150,9 @@ docker compose --env-file .env -f grafana/docker-compose.yml up -d
 | 브리지 변환 | `tests/test_bridge.py`: 서비스 엔진이 실제로 만든 결과로 점 변환, 예측 시각 이동, null 처리, 한글·공백 태그 escape | 통과 |
 | 대시보드 ↔ 브리지 이름 일치 | 대시보드 JSON 의 `tsinfer_result` 필드가 모두 브리지가 쓰는 필드인지 검사 | 통과 |
 | 요약 숫자 = 보고서 숫자 | `tests/test_viz_results.py`: 과제 3 개선율이 보고서 표와 같은지, 보고서가 없을 때도 페이지가 만들어지는지 | 통과 |
-| 실제 InfluxDB·Grafana 에서 쿼리 실행 | Jetson 에서 위 0~3 단계 | **아직 안 함.** 클라우드 작업 환경에서 학교 InfluxDB 에 닿지 않았다. 쿼리가 실패하면 패널의 오류 문구를 알려 주면 고친다 |
+| 실제 InfluxDB·Grafana 에서 쿼리 실행 | Jetson 1호기, 교육장 InfluxDB + Grafana 11.3 (2026-10-21) | 통과. 센서·추론 결과 패널이 모두 그려짐. 사무실 밖은 CO₂ 센서가 없어 예측 패널만 No data |
+| 알림 규칙 4개 발화 | Grafana 11.3 + InfluxDB 2.7 컨테이너에 시험 데이터(예측 1,100ppm, 30분 끊긴 센서, 20분 멈춘 결과, stuck 경보)를 넣고 웹훅 수신기로 메시지 확인 (2026-10-21) | 통과. 4개 모두 해당 공간에만 발화, 정상 공간은 Normal. 실제 디스코드 수신은 Jetson 에서 확인 |
+| 알림 파일 모양 | `tests/test_alerting.py`: 데이터 소스 uid, wide 표(keep), 브리지 필드 이름, 달러 기호, 라우팅 | 통과 |
 
 ## AI 활용
 
