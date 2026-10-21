@@ -156,3 +156,73 @@ def test_full_run_selects_combo_on_validation_only():
     lines = ad.build_report(out, CFG, 3)
     text = "\n".join(lines)
     assert "## 측정 조건" in text and "## 해석 (직접 작성)" in text and "해당 없음" in text
+    # 과제 안내 5종 절: 기존 결합·최종 결합 표, 종류마다 '누가 잡았나' 한 줄, 냉방·환기 정지는 실내·사용 시간만
+    assert "## 과제 안내 고장 5종 시험" in text
+    assert text.index("## 과제 안내 고장 5종 시험") < text.index("## 설계상 한계")
+    for m in ("base", "final"):
+        tab = out["t4"][m]["table"]
+        assert list(tab.index[:5]) == [f"{k} ({ad.T4_LABELS[k]})" for k in ad.T4_KINDS] and tab.index[-1] == "전체"
+        assert ad.METHOD_TITLES[m] in text
+    for k in ad.T4_KINDS:
+        assert sum(line.startswith(f"- {k} (") for line in lines) == 2
+    new = [f for f in out["t4_faults"] if f.kind in ("cooling_off", "vent_off")]
+    assert any(f.kind == "cooling_off" for f in new)
+    use = ad.usage_mask(w.index, "Asia/Seoul", [])
+    for f in new:
+        assert f.space in SPACES and use[(w.index >= f.start) & (w.index < f.end)].all()
+    assert [f for f in out["t4_faults"] if f.kind in ("spike", "stuck", "drift")] == \
+        [f for f in out["faults"] if f.kind in ("spike", "stuck", "drift")]
+
+
+def test_usage_injections_stay_in_usage_hours_with_right_size():
+    w = _wide()
+    inj, faults = ad.inject_usage(w, SPACES, per_kind=4, seed=0, tz="Asia/Seoul", holidays=["2026-09-02"])
+    kinds = [f.kind for f in faults]
+    assert kinds.count("cooling_off") == 4 and kinds.count("vent_off") >= 1
+    changed = (inj != w) & inj.notna()
+    marked = pd.DataFrame(False, index=w.index, columns=w.columns)
+    for f in faults:
+        idx = w.index[(w.index >= f.start) & (w.index < f.end)]
+        local = idx.tz_convert("Asia/Seoul")
+        # 구간 전체가 평일 9~18시, 공휴일 아님, 2~3시간
+        assert (local.dayofweek < 5).all() and (local.hour >= 9).all() and (local.hour < 18).all()
+        assert not (local.strftime("%Y-%m-%d") == "2026-09-02").any()
+        assert 24 <= len(idx) <= 36 and f.end - f.start == len(idx) * pd.Timedelta(minutes=5)
+        d = inj.loc[idx, (f.space, f.metric)] - w.loc[idx, (f.space, f.metric)]
+        if f.kind == "cooling_off":
+            assert f.metric == "temperature"
+            assert d.iloc[0] == pytest.approx(0) and 3.0 <= d.iloc[-1] <= 5.0
+            assert np.allclose(np.diff(d.to_numpy()), d.iloc[-1] / (len(idx) - 1))      # 선형
+        else:
+            assert f.metric == "co2"
+            c0 = w.loc[idx[0], (f.space, "co2")]
+            rise = w.loc[idx, (f.space, "co2")] - c0
+            assert rise.iloc[-1] >= ad.VENT_MIN_RISE
+            up = rise > 0
+            assert np.allclose(inj.loc[idx[up], (f.space, "co2")] - c0, 1.8 * rise[up])
+            assert np.allclose(d[~up], 0)
+        after = w.index[w.index >= f.end][:1]
+        assert not changed.loc[after, (f.space, f.metric)].any()                       # 끝에서 원래 값
+        marked.loc[idx, (f.space, f.metric)] = True
+    assert not (changed & ~marked).any(axis=None)                                       # 고장 구간 밖은 그대로
+    # 같은 공간 고장끼리 겹치지 않고 간격 유지
+    for a in faults:
+        for b in faults:
+            if a is not b and a.space == b.space:
+                assert a.end + ad.T4_SEP <= b.start or b.end + ad.T4_SEP <= a.start
+
+
+def test_task_kinds_reverts_noise_dropout_and_skips_outdoor():
+    w = _wide(days=10)
+    w[("outside", "co2")] = 420.0 + np.random.default_rng(1).normal(0, 2, len(w))
+    spaces = SPACES + ["outside"]
+    inj, faults = an.inject(w, spaces, per_kind=2, seed=0)
+    t4, t4f = ad.inject_task_kinds(w, inj, faults, spaces, 3, 0, "Asia/Seoul", [], outdoor="outside")
+    assert {f.kind for f in t4f} <= set(ad.T4_KINDS)
+    assert [f for f in t4f if f.kind in ("spike", "stuck", "drift")] == [f for f in faults if f.kind in ad.T4_KINDS]
+    assert all(f.space != "outside" for f in t4f if f.kind in ("cooling_off", "vent_off"))
+    for f in faults:
+        if f.kind in ("noise", "dropout"):
+            sel = (w.index >= f.start) & (w.index < f.end)
+            cols = [(f.space, m) for m in an.METRICS] if f.metric == "*" else [(f.space, f.metric)]
+            pd.testing.assert_frame_equal(t4.loc[sel, cols], w.loc[sel, cols])
