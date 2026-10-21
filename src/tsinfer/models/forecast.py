@@ -134,15 +134,17 @@ def space_features(wide: pd.DataFrame, space: str, spec: FeatureSpec) -> pd.Data
 
 
 def make_windows(wide: pd.DataFrame, spec: FeatureSpec, at: pd.DatetimeIndex | None = None,
-                 with_target: bool = True) -> tuple[np.ndarray, np.ndarray | None, pd.DataFrame]:
+                 with_target: bool = True, spaces: list[str] | None = None,
+                 ) -> tuple[np.ndarray, np.ndarray | None, pd.DataFrame]:
     """(N, lookback, F) 입력, (N, 2*H) 변화량 목표(정규화), 행별 정보(time, space, 현재값).
 
     at: 예측 기준 시점(창의 마지막 칸) 후보. None 이면 전체.
     입력 창 안에 자기 공간 CO₂·온도 결측이 있거나, 목표에 결측이 있으면 버린다.
+    spaces: 창을 만들 공간 (기본 spec.spaces). 학습에 없던 공간도 되며, 그 공간 표시(one-hot)는 모두 0.
     """
     L, H = spec.lookback, len(spec.horizons)
     xs, ys, infos = [], [], []
-    for sp in spec.spaces:
+    for sp in (spec.spaces if spaces is None else spaces):
         f = space_features(wide, sp, spec)
         arr = f.to_numpy()
         if len(arr) < L:
@@ -187,22 +189,76 @@ def decode(pred: np.ndarray, info: pd.DataFrame, spec: FeatureSpec) -> dict[str,
 
 # ---------------------------------------------------------------- torch 부분 (학습·서비스에서만 import)
 
+ARCHS = ("gru", "lstm", "tcn")
+
+
 def build_model(spec: FeatureSpec, mc: dict[str, Any]):
+    """mc["arch"]: gru(기본) / lstm / tcn. 셋 다 (N, L, F) → (N, 2*H) 변화량. arch 가 없는 옛 모델 파일은 GRU."""
     import torch
     from torch import nn
+
+    arch = mc.get("arch", "gru")
+    n_out = len(TARGETS) * len(spec.horizons)
 
     class GRUForecast(nn.Module):
         def __init__(self):
             super().__init__()
             self.gru = nn.GRU(spec.n_features, mc["hidden"], num_layers=mc["layers"], batch_first=True,
                               dropout=mc["dropout"] if mc["layers"] > 1 else 0.0)
-            self.head = nn.Sequential(nn.Dropout(mc["dropout"]), nn.Linear(mc["hidden"], len(TARGETS) * len(spec.horizons)))
+            self.head = nn.Sequential(nn.Dropout(mc["dropout"]), nn.Linear(mc["hidden"], n_out))
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             _, h = self.gru(x)
             return self.head(h[-1])
 
-    return GRUForecast()
+    class LSTMForecast(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lstm = nn.LSTM(spec.n_features, mc["hidden"], num_layers=mc["layers"], batch_first=True,
+                                dropout=mc["dropout"] if mc["layers"] > 1 else 0.0)
+            self.head = nn.Sequential(nn.Dropout(mc["dropout"]), nn.Linear(mc["hidden"], n_out))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            _, (h, _) = self.lstm(x)
+            return self.head(h[-1])
+
+    class CausalBlock(nn.Module):
+        """왼쪽만 채우는 dilated Conv1d 2층 + 잔차. 미래 칸을 보지 않는다."""
+
+        def __init__(self, cin: int, cout: int, k: int, d: int, p: float):
+            super().__init__()
+            self.pad = (k - 1) * d
+            self.c1 = nn.Conv1d(cin, cout, k, dilation=d)
+            self.c2 = nn.Conv1d(cout, cout, k, dilation=d)
+            self.drop = nn.Dropout(p)
+            self.skip = nn.Conv1d(cin, cout, 1) if cin != cout else nn.Identity()
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            y = self.drop(torch.relu(self.c1(nn.functional.pad(x, (self.pad, 0)))))
+            y = self.drop(torch.relu(self.c2(nn.functional.pad(y, (self.pad, 0)))))
+            return torch.relu(y + self.skip(x))
+
+    class TCNForecast(nn.Module):
+        # 커널 3, dilation 1·2·4·8·16 → 수용 영역 1+2·2·31 = 125칸 (4시간 입력 48칸도 덮는다)
+        def __init__(self):
+            super().__init__()
+            ch, k = mc.get("tcn_channels", 48), mc.get("tcn_kernel", 3)
+            dil = mc.get("tcn_dilations", [1, 2, 4, 8, 16])
+            self.blocks = nn.Sequential(*[CausalBlock(spec.n_features if i == 0 else ch, ch, k, d, mc["dropout"])
+                                          for i, d in enumerate(dil)])
+            self.head = nn.Sequential(nn.Dropout(mc["dropout"]), nn.Linear(ch, n_out))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            y = self.blocks(x.transpose(1, 2))      # (N, C, L)
+            return self.head(y[:, :, -1])            # 마지막 칸 = 지금
+
+    if arch not in ARCHS:
+        raise ValueError(f"model.arch 는 {ARCHS} 중 하나: {arch!r}")
+    return {"gru": GRUForecast, "lstm": LSTMForecast, "tcn": TCNForecast}[arch]()
+
+
+def n_params(model) -> int:
+    return int(sum(p.numel() for p in model.parameters()))
 
 
 def train(x_tr, y_tr, x_va, y_va, spec: FeatureSpec, mc: dict[str, Any], log=print):
@@ -262,6 +318,7 @@ def save(model, spec: FeatureSpec, mc: dict[str, Any], path: Path = MODEL_PATH, 
     import torch
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    mc = {**mc, "arch": mc.get("arch", "gru")}   # 불러올 때 같은 구조를 만들도록 arch 를 명시해 둔다
     torch.save({"state_dict": model.state_dict(), "spec": spec.to_dict(), "model_cfg": mc, **(extra or {})}, path)
 
 
