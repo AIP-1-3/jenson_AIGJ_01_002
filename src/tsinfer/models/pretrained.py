@@ -3,6 +3,8 @@
     .venv/bin/pip install chronos-forecasting "numpy<2"   # 처음 한 번 (NumPy 1.26 유지)
     ~/jetson_orin/scripts/gpu-run.sh -- .venv/bin/python -m tsinfer.models.pretrained
     # 옵션: --model amazon/chronos-bolt-small(기본)|...-tiny|...-base  --device cpu|cuda  --every 60 --max-points 300
+    # 심화: --ensemble → GRU·Chronos 앙상블 + Chronos-2 공변량, reports/06b_pretrained_deep.md (pretrained_deep.py)
+    #       기본 실행과 06_pretrained.md 는 바뀌지 않는다
 
 같은 시험 시점에서 현재값 유지 / GRU(과제 3, 있으면) / Chronos 를 비교한다.
   1) 정확도: 5·15·30·60분 MAE (Chronos 는 중앙값 예측)
@@ -169,6 +171,10 @@ def main() -> int:
     ap.add_argument("--context-hours", type=int, default=42, help="과거 입력 길이 (기본 42시간 = 504칸)")
     ap.add_argument("--every", type=int, default=60, help="시험 기간에서 몇 분마다 평가할지")
     ap.add_argument("--max-points", type=int, default=300)
+    ap.add_argument("--ensemble", action="store_true",
+                    help="심화: GRU·Chronos 앙상블 + Chronos-2 공변량 → reports/06b_pretrained_deep.md")
+    ap.add_argument("--chronos2-model", default="amazon/chronos-2")
+    ap.add_argument("--no-chronos2", action="store_true", help="--ensemble 에서 Chronos-2 시도를 건너뜀")
     args = ap.parse_args()
 
     import torch
@@ -185,6 +191,17 @@ def main() -> int:
     spaces = [sp for sp in cfg["spaces"] if all((sp, m) in wide and wide[(sp, m)].notna().any() for m in TARGETS)]
     points = eval_points(test.index, args.every, args.max_points, cfg["forecast"]["horizon_minutes"])
     ctx_len = args.context_hours * 60 // step
+
+    if args.ensemble:   # 심화는 따로 저장 — 기본 보고서는 기본 실행에서만 쓴다
+        from tsinfer.models import pretrained_deep
+
+        lines = pretrained_deep.run(args, cfg, wide)
+        out = ROOT / "reports" / pretrained_deep.OUT_NAME
+        out.parent.mkdir(exist_ok=True)
+        out.write_text("\n".join(lines), encoding="utf-8")
+        print("\n".join(lines))
+        print(f"\n저장: {out}")
+        return 0
 
     mem0, peak0 = rss_mb(), peak_mem_mb()
     t0 = time.perf_counter()

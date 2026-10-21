@@ -116,13 +116,28 @@ def parse_trtexec_output(path: Path, name: str = "y") -> np.ndarray:
 def trt_build_and_measure(trtexec: str, onnx: Path, sample: np.ndarray, batches: list[int], check_batch: int,
                           workdir: Path, input_name: str = "x") -> tuple[dict[int, dict[str, float]], np.ndarray, str]:
     """FP16 엔진을 만들고 배치별 지연을 잰 뒤, check_batch 개 입력의 출력을 돌려준다."""
+    engine = trt_build(trtexec, onnx, sample, batches, check_batch, input_name=input_name)
+    return trt_measure(trtexec, engine, sample, batches, check_batch, workdir, input_name)
+
+
+def trt_build(trtexec: str, onnx: Path, sample: np.ndarray, batches: list[int], check_batch: int,
+              input_name: str = "x", precision: tuple[str, ...] = ("--fp16",), engine: Path | None = None,
+              extra: tuple[str, ...] = ()) -> Path:
+    """trtexec 로 엔진 만들기. precision 예: ("--fp16",), ("--int8", "--fp16")."""
     shape = "x".join(str(d) for d in sample.shape[1:])
-    engine = onnx.with_suffix(".engine")
+    engine = engine or onnx.with_suffix(".engine")
     lo, hi = min(batches + [check_batch]), max(batches + [check_batch])
-    build = [trtexec, f"--onnx={onnx}", "--fp16", f"--saveEngine={engine}",
+    build = [trtexec, f"--onnx={onnx}", *precision, f"--saveEngine={engine}",
              f"--minShapes={input_name}:{lo}x{shape}", f"--optShapes={input_name}:{max(batches)}x{shape}",
-             f"--maxShapes={input_name}:{hi}x{shape}", "--skipInference"]
+             f"--maxShapes={input_name}:{hi}x{shape}", "--skipInference", *extra]
     subprocess.run(build, check=True, capture_output=True, text=True)
+    return engine
+
+
+def trt_measure(trtexec: str, engine: Path, sample: np.ndarray, batches: list[int], check_batch: int,
+                workdir: Path, input_name: str = "x") -> tuple[dict[int, dict[str, float]], np.ndarray, str]:
+    """만들어 둔 엔진의 배치별 지연(trtexec Latency)과 check_batch 개 입력의 출력."""
+    shape = "x".join(str(d) for d in sample.shape[1:])
     lat = {}
     log = ""
     for b in batches:
@@ -131,8 +146,8 @@ def trt_build_and_measure(trtexec: str, onnx: Path, sample: np.ndarray, batches:
                            check=True, capture_output=True, text=True)
         log += r.stdout[-1500:]
         lat[b] = parse_trtexec_latency(r.stdout) or {"mean_ms": np.nan, "p95_ms": np.nan}
-    inp = workdir / f"{onnx.stem}_in.bin"
-    out = workdir / f"{onnx.stem}_out.json"
+    inp = workdir / f"{engine.stem}_in.bin"
+    out = workdir / f"{engine.stem}_out.json"
     np.ascontiguousarray(sample[:check_batch], dtype="float32").tofile(inp)
     subprocess.run([trtexec, f"--loadEngine={engine}", f"--shapes={input_name}:{check_batch}x{shape}",
                     f"--loadInputs={input_name}:{inp}", f"--exportOutput={out}", "--iterations=1", "--warmUp=0",
