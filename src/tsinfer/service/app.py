@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -90,11 +91,18 @@ class Runner:
 
 
 def create_app(runner: Runner, start_loop: bool = True) -> FastAPI:
-    app = FastAPI(title="tsinfer", version="0.1")
+    # Starlette 1.x 에서 add_event_handler/on_event 가 없어져 lifespan 으로 시작·종료를 건다
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        if start_loop:
+            runner.start()
+        try:
+            yield
+        finally:
+            if start_loop:
+                runner.stop()
 
-    if start_loop:
-        app.add_event_handler("startup", runner.start)
-        app.add_event_handler("shutdown", runner.stop)
+    app = FastAPI(title="tsinfer", version="0.1", lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

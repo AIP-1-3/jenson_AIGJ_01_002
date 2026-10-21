@@ -120,3 +120,24 @@ def test_runner_api_and_summary(tmp_path):
     s = summarize(log, hours=1, now=NOW + timedelta(minutes=2))
     assert s["cycles"] == 2 and s["failed_cycles"] == 1 and s["data_gap_minutes"]["office"] == 1
     assert all(json.loads(line)["duration_ms"] >= 0 for line in log.read_text().splitlines())
+
+
+def test_app_starts_and_stops_loop():
+    # 실제 서비스처럼 start_loop=True 로 앱을 띄워 시작·종료 훅이 불리는지 (FastAPI 버전 변화 회귀 방지)
+    class FakeRunner:
+        started = stopped = False
+        latest = None
+        consecutive_failures = 0
+        last_error = None
+        started_at = NOW
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+    r = FakeRunner()
+    with TestClient(create_app(r)) as client:
+        assert r.started and client.get("/health").status_code == 200
+    assert r.stopped
