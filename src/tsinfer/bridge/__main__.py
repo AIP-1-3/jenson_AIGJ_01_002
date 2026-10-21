@@ -3,10 +3,12 @@
 서비스(tsinfer-service)가 MQTT 로 내는 `{PUBLISH_PREFIX}/+` 결과를 받아 InfluxDB 에 쓴다.
 서비스·수집기와 별개 프로세스라, 이 브리지가 죽거나 InfluxDB 가 안 닿아도 추론과 수집은 그대로 돈다.
 
-- 쓰기 대상: INFLUX_URL / INFLUX_ORG, 버킷 INFLUX_RESULT_BUCKET(기본 tsinfer),
-  토큰 INFLUX_WRITE_TOKEN(없으면 INFLUX_TOKEN). iot-bucket(공용 원본)에는 쓰지 않는다.
+- 쓰기 대상: INFLUX_RESULT_URL / INFLUX_RESULT_ORG (없으면 INFLUX_URL / INFLUX_ORG), 버킷 INFLUX_RESULT_BUCKET(기본 tsinfer),
+  토큰 INFLUX_WRITE_TOKEN(없으면 INFLUX_TOKEN). 원본 버킷에는 쓰지 않는다.
+  과거 데이터를 받는 서버(INFLUX_URL)와 Grafana 가 보는 학교 서버가 다를 수 있어 따로 둔다.
 - 쓰기 실패분은 메모리에 최대 MAX_PENDING 점까지 들고 있다가 다음 메시지 때 같이 보낸다.
 - --dry-run: InfluxDB 에 쓰지 않고 line protocol 을 화면에 찍는다 (접속 정보 없이 형식 확인용).
+- --check: 점 1개(tsinfer_bridge_check)를 써 보고 끝낸다. 주소·조직·토큰·버킷 권한 확인용.
 """
 from __future__ import annotations
 
@@ -16,8 +18,10 @@ import logging
 import os
 import signal
 from collections import deque
+from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
+from dotenv import load_dotenv
 
 from tsinfer.bridge.points import Point, to_points
 from tsinfer.config import ROOT, mqtt_settings
@@ -44,13 +48,18 @@ class InfluxSink:
         from influxdb_client.client.write_api import SYNCHRONOUS
 
         token = os.getenv("INFLUX_WRITE_TOKEN") or os.environ["INFLUX_TOKEN"]
-        self.org = os.environ["INFLUX_ORG"]
+        self.org = os.getenv("INFLUX_RESULT_ORG") or os.environ["INFLUX_ORG"]
         self.bucket = os.getenv("INFLUX_RESULT_BUCKET") or "tsinfer"
-        if self.bucket == (os.getenv("INFLUX_BUCKET") or "iot-bucket"):
+        if self.bucket in {os.getenv("INFLUX_BUCKET") or "iot-bucket", "sensor_data"}:
             raise RuntimeError("INFLUX_RESULT_BUCKET 이 원본 버킷과 같습니다. 결과는 별도 버킷에 씁니다.")
-        self.client = InfluxDBClient(url=os.environ["INFLUX_URL"], token=token, org=self.org, timeout=10_000)
+        self.client = InfluxDBClient(url=os.getenv("INFLUX_RESULT_URL") or os.environ["INFLUX_URL"], token=token, org=self.org, timeout=10_000)
         self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
         self.pending: deque[str] = deque(maxlen=MAX_PENDING)
+
+    def check(self) -> None:
+        """실패하면 예외를 그대로 올려 원인(401 토큰, 404 버킷 등)을 화면에 보인다."""
+        line = f"tsinfer_bridge_check ok=1i {int(datetime.now(timezone.utc).timestamp())}"
+        self.write_api.write(bucket=self.bucket, org=self.org, record=line, write_precision="s")
 
     def write(self, lines: list[str]) -> None:
         self.pending.extend(lines)
@@ -69,8 +78,17 @@ class InfluxSink:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 line protocol 출력")
+    ap.add_argument("--check", action="store_true", help="InfluxDB 에 점 1개를 써 보고 끝냄")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    if args.check:
+        load_dotenv(ROOT / ".env")
+        sink = InfluxSink()
+        sink.check()
+        print(f"쓰기 성공: {sink.client.url} org={sink.org} bucket={sink.bucket}")
+        sink.close()
+        return 0
 
     settings = mqtt_settings()          # .env 도 여기서 읽힌다
     prefix = publish_prefix()
