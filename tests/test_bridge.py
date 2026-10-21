@@ -119,3 +119,23 @@ def test_mirror_refuses_to_write_back_to_source_server(monkeypatch):
         mirror_enabled()
     monkeypatch.setenv("INFLUX_RESULT_URL", "http://localhost:8186")
     assert mirror_enabled()
+
+
+def test_sink_writes_with_second_precision(monkeypatch):
+    """줄 끝 시각이 초 단위이므로 쓰기 정밀도도 초여야 한다 (ns 로 읽히면 1970년 점이 돼 거부됨)."""
+    from tsinfer.bridge.__main__ import InfluxSink
+
+    calls = []
+
+    class FakeWrite:
+        def write(self, **kw):
+            calls.append(kw)
+
+    sink = InfluxSink.__new__(InfluxSink)
+    sink.bucket, sink.org, sink.write_api = "tsinfer", "org", FakeWrite()
+    from collections import deque
+
+    sink.pending = deque(maxlen=10)
+    sink.write([to_line(to_points(_payload())[0])])
+    assert calls and all(str(c["write_precision"]).lower().endswith("s") for c in calls)
+    assert not sink.pending
