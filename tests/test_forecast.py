@@ -74,6 +74,12 @@ def test_gru_beats_persistence_and_service_predictor(tmp_path):
     assert set(p) == {"co2", "temperature"} and set(p["co2"]) == set(range(5, 61, 5))
     assert p["co2"][60] > w.loc[now, ("lab", "co2")]
     assert f.predict(w[w.index <= now], "outside") == {}
+    # 10분 주기 센서처럼 끝 칸이 비어도 예측한다 (직전 값으로 최대 2칸), 3칸 넘게 비면 끊김으로 본다
+    cut = w[w.index <= now].copy()
+    cut.iloc[-1, cut.columns.get_loc(("lab", "co2"))] = np.nan
+    assert set(f.predict(cut, "lab")) == {"co2", "temperature"}
+    cut.iloc[-3:, cut.columns.get_loc(("lab", "co2"))] = np.nan
+    assert f.predict(cut, "lab") == {}
 
 
 def test_holidays_schedule_and_alpha():

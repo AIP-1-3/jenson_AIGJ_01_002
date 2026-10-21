@@ -14,6 +14,8 @@
 - 접속 ID 는 `MQTT_CLIENT_ID` + `-svc` (수집기와 겹치면 브로커가 한쪽을 끊는다).
 
 ## API (`API_PORT`, 기본 8100)
+
+> 호출 위치: Jetson 안(ssh 접속 후)에서는 `curl -s localhost:8100/latest`. 다른 컴퓨터에서는 `localhost` 대신 Jetson 주소(팀 Tailscale 이름 등)를 쓴다. 서비스는 모든 인터페이스(0.0.0.0)에서 받는다.
 | 경로 | 설명 |
 |---|---|
 | `GET /health` | `ok`, 마지막 추론 시각, 연속 실패 수, 공간별 `data_ok` |

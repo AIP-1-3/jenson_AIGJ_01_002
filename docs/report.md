@@ -124,6 +124,7 @@
 
 - **설정만 바꾸면 된다:** 센서 형식 변경은 `configs/sensors.yaml`, 공간·임계값·공휴일은 `configs/default.yaml`, 정답 시간표는 `configs/schedule.yaml`.
 - **학습과 서비스가 같은 코드:** 전처리 `preprocess.clean/to_wide`, 입력 `forecast.make_windows` 를 서비스도 그대로 쓴다. 모델 파일에 정규화 통계·공휴일·일정·보정 계수를 함께 저장한다.
+- **다른 사람이 문서만 보고 사용:** 2026-10-21 20:18 KST 팀원(본인 계정 `seongchan`)이 [interface.md](interface.md) 만 보고 Jetson 에서 `curl -s localhost:8100/latest` 를 호출해 네 공간의 현재값·60분 예측·이상·상태를 받았다. 처음에는 본인 맥북에서 쳐서 응답이 없었는데, `localhost` 가 Jetson 이 아니라 맥북을 가리켰기 때문이다. 문서에 '보드 안에서 또는 보드 주소로' 호출한다는 안내를 더했다.
 - **모델 교체:** `.env` 의 `SERVICE_MODEL` 만 바꾸면 된다. 모델 파일이 없으면 기준선으로 계속 돈다.
 - **검증:** pytest 96개 (합성 데이터로 수집 매핑·형식 변경, 전처리, 기준선, 예측, 이상 탐지, 상태 추정, ONNX 변환, 서비스 API, 심화 모듈).
 - **재현:** `./scripts/run_all.sh` 한 번으로 과제 2~7 보고서, `./scripts/run_all.sh deep` 으로 심화 보고서 생성. 결과 형식은 [interface.md](interface.md).
@@ -225,7 +226,7 @@ AI 가 쓴 코드는 모두 PR 로 남겼고(저장소 PR #1~), 각 PR 본문에
 | 성실성·꾸준함 (10) | 5 | 5 | 기록이 하루(10-20)에 몰려 있음 | 10-21·22 기록과 회고 | 9장 |
 | **합계 (100)** | **68** | **82** | 80% 미만: 결과와 근거(73%), 성실성(50%) | 수요일 12시간 시험과 날짜별 기록으로 해소 | |
 
-**3차 (10-21 저녁):** 루브릭 A 87점. 과제 안내 평가 기준(동작 25 · 성능 25 · 해석 30 · 공정한 평가 10 · 재사용성 10)으로는 76점이고, 12시간 기록과 심화 결과를 채우면 83~88점으로 본다. 성능은 과제 3·4·5 확인 기준이 미달이라 만점이 어렵다. 항목별 감점 이유와 남은 일은 [self-grade.md](self-grade.md).
+**3차 (10-21 저녁):** 루브릭 A 87점. 과제 안내 평가 기준(동작 25 · 성능 25 · 해석 30 · 공정한 평가 10 · 재사용성 10)으로는 80점이고(재부팅 자동 시작, 팀원 API 사용 확인 반영), 12시간 기록과 심화 결과를 채우면 87~92점으로 본다. 성능은 과제 3·4·5 확인 기준이 미달이라 만점이 어렵다. 항목별 감점 이유와 남은 일은 [self-grade.md](self-grade.md).
 
 ## 부록. 과제별 상세 보고서
 [02_baselines](../reports/02_baselines.md) · [02_diagnosis](../reports/02_diagnosis.md) · [03_forecast](../reports/03_forecast.md) · [04_anomaly](../reports/04_anomaly.md) · [05_state](../reports/05_state.md) · [06_pretrained](../reports/06_pretrained.md) · [07_edge](../reports/07_edge.md) · [interface](interface.md)
