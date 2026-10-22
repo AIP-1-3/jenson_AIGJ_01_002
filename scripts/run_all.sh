@@ -5,6 +5,7 @@
 #   ./scripts/run_all.sh deep       # 심화(B) 전부: 1b 3b 4b 5b 6b 7b 8b
 #   ./scripts/run_all.sh 4b 7b      # 고른 심화만
 #   ./scripts/run_all.sh 3c         # 과제 3 개선(GRU 평균+Chronos) → reports/03c_forecast_ens.md
+#   ./scripts/run_all.sh 4c         # 과제 4 개선(사용 시간 맥락) → reports/04c_anomaly_ctx.md
 # 무거운 단계(6·7)는 팀 GPU 락(gpu-run.sh) 안에서 돈다. 로그: logs/run_all_<시각>.log
 # 진행 보기: tail -f "$(ls -t logs/run_all_*.log | head -1)"
 set -uo pipefail
@@ -39,6 +40,7 @@ for s in "${STEPS[@]}"; do
     3b) run 3b "LSTM·TCN·lookback·한 공간 빼기" gpu $PY -m tsinfer.models.forecast_deep ;;
     3c) run 3c "GRU 평균+Chronos 섞기(개선)" gpu $PY -m tsinfer.models.forecast_ens ;;
     4b) run 4b "예측오차·영점 틀어짐 탐지" $PY -m tsinfer.models.anomaly_deep ;;
+    4c) run 4c "사용 시간 맥락·5종 검증 선택(개선)" $PY -m tsinfer.models.anomaly_ctx ;;
     5b) run 5b "한 공간 빼기·시간표 대조" $PY -m tsinfer.models.state_deep ;;
     6b) run 6b "GRU+Chronos 앙상블·공변량" gpu $PY -m tsinfer.models.pretrained --ensemble ;;
     7b) run 7b "INT8·동시 적재 메모리" gpu $PY -m tsinfer.models.edge_deep ;;
