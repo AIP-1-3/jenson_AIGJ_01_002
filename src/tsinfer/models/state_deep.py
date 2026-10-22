@@ -306,7 +306,7 @@ def _vent_row(method: str, y: np.ndarray, pred: np.ndarray, thr=None, rule_f1: f
 
 
 def forecast_alarm(cfg: dict[str, Any], wide: pd.DataFrame, df: pd.DataFrame, model_path: Path | None = None,
-                   folds: int = st.CV_FOLDS) -> dict[str, Any]:
+                   folds: int = st.CV_FOLDS, recall_target: float = st.RECALL_TARGET) -> dict[str, Any]:
     """규칙 / 기존 hgb / 예측 기반 / 결합 hgb 를 같은 시험 시점에서 채점.
 
     양성 정의는 state.py 그대로 (이미 임계값을 넘은 시점 제외). GRU 가 있으면 시험 행을 'GRU 예측이 있는 시점'으로
@@ -348,7 +348,8 @@ def forecast_alarm(cfg: dict[str, Any], wide: pd.DataFrame, df: pd.DataFrame, mo
     y_fit = fit["y_vent"].to_numpy().astype(int)
     p_oof = st.oof_proba(lambda: st.make_models(seed)["hgb"], fit[base], y_fit, folds)
     okp = ~np.isnan(p_oof)
-    thr_rec, thr_f1 = st.pick_threshold(y_fit[okp], p_oof[okp]), st.pick_threshold_f1(y_fit[okp], p_oof[okp])
+    thr_rec = st.pick_threshold(y_fit[okp], p_oof[okp], recall_target)
+    thr_f1 = st.pick_threshold_f1(y_fit[okp], p_oof[okp])
     p_te = st.make_models(seed)["hgb"].fit(fit[base], y_fit).predict_proba(te[base])[:, 1]
     rows += [_vent_row("기존 hgb (재현율 운영점)", y_te, p_te >= thr_rec, thr_rec, rule_f1),
              _vent_row("기존 hgb (F1 최대 운영점)", y_te, p_te >= thr_f1, thr_f1, rule_f1)]
@@ -361,14 +362,14 @@ def forecast_alarm(cfg: dict[str, Any], wide: pd.DataFrame, df: pd.DataFrame, mo
         fit_g = fit[fit["gru_max30"].notna()]
         yg = fit_g["y_vent"].to_numpy().astype(int)
         # 예측 기반: 'GRU 5~30분 예측 최댓값 ≥ 임계값(ppm)이면 경보'. 임계값은 학습+검증 기간에서만 고른다
-        t_f1, t_rec = pick_two(yg, fit_g["gru_max30"].to_numpy())
+        t_f1, t_rec = pick_two(yg, fit_g["gru_max30"].to_numpy(), recall_target)
         s_te = te["gru_max30"].to_numpy()
         rows += [_vent_row("예측 기반 (F1 최대 운영점)", y_te, s_te >= t_f1, t_f1, rule_f1),
                  _vent_row("예측 기반 (재현율 운영점)", y_te, s_te >= t_rec, t_rec, rule_f1)]
         # 결합 hgb: 기존 입력 + GRU 예측 최댓값·상승폭 + 규칙 신호. 기존 hgb 와 같은 교차 예측 절차
         p_oof = st.oof_proba(lambda: st.make_models(seed)["hgb"], fit_g[comb], yg, folds)
         okp = ~np.isnan(p_oof)
-        c_f1, c_rec = pick_two(yg[okp], p_oof[okp])
+        c_f1, c_rec = pick_two(yg[okp], p_oof[okp], recall_target)
         p_te = st.make_models(seed)["hgb"].fit(fit_g[comb], yg).predict_proba(te[comb])[:, 1]
         rows += [_vent_row("결합 hgb (F1 최대 운영점)", y_te, p_te >= c_f1, c_f1, rule_f1),
                  _vent_row("결합 hgb (재현율 운영점)", y_te, p_te >= c_rec, c_rec, rule_f1)]
